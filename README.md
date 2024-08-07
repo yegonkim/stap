@@ -1,6 +1,11 @@
 LUPI with neural operators
 
 
+VESSL init
+conda init bash
+conda activate /mnt/home/yegonkim/miniconda3/envs/lupi
+cp -r /mnt/home/yegonkim/home/lupi/data data
+
 Generate data
 
 python generate_data.py --experiment=KdV --train_samples=1024 --valid_samples=1024 --test_samples=4096 --L=128 --suffix default --batch_size 4096 --device cuda
