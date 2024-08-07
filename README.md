@@ -31,3 +31,28 @@ python run_experiment.py --equation KS --experiment direct
 python run_experiment.py --equation KS --experiment multi
 python run_experiment.py --equation KS --experiment ar_0
 python run_experiment.py --equation KS --experiment ar_1
+
+python run_experiment.py --equation KS --experiment ar_1
+
+AL experiments
+
+python run_experiment_al.py --equation KdV --experiment direct_random --unrolling 0
+python run_experiment_al.py --equation KdV --experiment direct_variance --unrolling 0
+python run_experiment_al.py --equation KdV --experiment direct_lcmd --unrolling 0
+python run_experiment_al.py --equation KdV --experiment trajectory_random --unrolling 0
+python run_experiment_al.py --equation KdV --experiment trajectory_variance --unrolling 0
+python run_experiment_al.py --equation KdV --experiment trajectory_lcmd --unrolling 0
+
+python run_experiment_al.py --equation Burgers --experiment direct_random --unrolling 1
+python run_experiment_al.py --equation Burgers --experiment direct_variance --unrolling 1
+python run_experiment_al.py --equation Burgers --experiment direct_lcmd --unrolling 1
+python run_experiment_al.py --equation Burgers --experiment trajectory_random --unrolling 1
+python run_experiment_al.py --equation Burgers --experiment trajectory_variance --unrolling 1
+python run_experiment_al.py --equation Burgers --experiment trajectory_lcmd --unrolling 1
+
+python run_experiment_al.py --equation KS --experiment direct_random --unrolling 0
+python run_experiment_al.py --equation KS --experiment direct_variance --unrolling 0
+python run_experiment_al.py --equation KS --experiment direct_lcmd --unrolling 0
+python run_experiment_al.py --equation KS --experiment trajectory_random --unrolling 0
+python run_experiment_al.py --equation KS --experiment trajectory_variance --unrolling 0
+python run_experiment_al.py --equation KS --experiment trajectory_lcmd --unrolling 0
