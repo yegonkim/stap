@@ -1,0 +1,5 @@
+data/
+old/
+__pycache__/
+# .ipynb
+
