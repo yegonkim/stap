@@ -39,20 +39,54 @@ AL experiments
 python run_experiment_al.py --equation KdV --experiment direct_random --unrolling 0
 python run_experiment_al.py --equation KdV --experiment direct_variance --unrolling 0
 python run_experiment_al.py --equation KdV --experiment direct_lcmd --unrolling 0
-python run_experiment_al.py --equation KdV --experiment trajectory_random --unrolling 0
 python run_experiment_al.py --equation KdV --experiment trajectory_variance --unrolling 0
 python run_experiment_al.py --equation KdV --experiment trajectory_lcmd --unrolling 0
 
 python run_experiment_al.py --equation Burgers --experiment direct_random --unrolling 1
 python run_experiment_al.py --equation Burgers --experiment direct_variance --unrolling 1
 python run_experiment_al.py --equation Burgers --experiment direct_lcmd --unrolling 1
-python run_experiment_al.py --equation Burgers --experiment trajectory_random --unrolling 1
 python run_experiment_al.py --equation Burgers --experiment trajectory_variance --unrolling 1
 python run_experiment_al.py --equation Burgers --experiment trajectory_lcmd --unrolling 1
 
 python run_experiment_al.py --equation KS --experiment direct_random --unrolling 0
 python run_experiment_al.py --equation KS --experiment direct_variance --unrolling 0
 python run_experiment_al.py --equation KS --experiment direct_lcmd --unrolling 0
-python run_experiment_al.py --equation KS --experiment trajectory_random --unrolling 0
 python run_experiment_al.py --equation KS --experiment trajectory_variance --unrolling 0
 python run_experiment_al.py --equation KS --experiment trajectory_lcmd --unrolling 0
+
+AL_comb
+
+python run_experiment_al_comb.py --equation KdV --experiment direct_variance --unrolling 0
+python run_experiment_al_comb.py --equation KdV --experiment direct_lcmd --unrolling 0
+python run_experiment_al_comb.py --equation Burgers --experiment direct_variance --unrolling 1
+python run_experiment_al_comb.py --equation Burgers --experiment direct_lcmd --unrolling 1
+python run_experiment_al_comb.py --equation KS --experiment direct_variance --unrolling 0
+python run_experiment_al_comb.py --equation KS --experiment direct_lcmd --unrolling 0
+
+python run_experiment_al_comb.py --equation KdV --experiment trajectory_variance --unrolling 0
+python run_experiment_al_comb.py --equation KdV --experiment trajectory_lcmd --unrolling 0
+python run_experiment_al_comb.py --equation Burgers --experiment trajectory_variance --unrolling 1
+python run_experiment_al_comb.py --equation Burgers --experiment trajectory_lcmd --unrolling 1
+python run_experiment_al_comb.py --equation KS --experiment trajectory_variance --unrolling 0
+python run_experiment_al_comb.py --equation KS --experiment trajectory_lcmd --unrolling 0
+
+sca python run_experiment_al_comb.py --equation KdV --experiment trajectory_variance --unrolling 0
+sca python run_experiment_al_comb.py --equation KdV --experiment trajectory_lcmd --unrolling 0
+sca python run_experiment_al_comb.py --equation Burgers --experiment trajectory_variance --unrolling 1
+sca python run_experiment_al_comb.py --equation Burgers --experiment trajectory_lcmd --unrolling 1
+sca python run_experiment_al_comb.py --equation KS --experiment trajectory_variance --unrolling 0
+sca python run_experiment_al_comb.py --equation KS --experiment trajectory_lcmd --unrolling 0
+
+export EQ=KdV
+export UNROLL=0
+
+export EQ=Burgers
+export UNROLL=1
+
+export EQ=KS
+export UNROLL=0
+
+bash tmux_scripts/al.sh
+bash tmux_scripts/al_2.sh
+bash tmux_scripts/al_comb.sh
+bash tmux_scripts/al_comb_2.sh

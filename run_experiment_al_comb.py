@@ -23,13 +23,18 @@ class Traj_dataset:
     traj_test = None
 
 
+# epochs = 1
+# lr = 0.001
+# batch_size = 32
+# batch_acquire = 1
+
 epochs = 500
 lr = 0.001
 batch_size = 32
 batch_acquire = 32
 
 
-def experiment_0(initial_datasize=256, batch_acquire=32, num_acquire=1, device='cpu', **cfg):
+def experiment_al_comb(initial_datasize=256, batch_acquire=32, num_acquire=1, device='cpu', **cfg):
     unrolling = cfg.get('unrolling', 1)
     nt = cfg.get('nt', 14)
     ensemble_size = cfg.get('ensemble_size', 5)
@@ -133,6 +138,8 @@ def experiment_0(initial_datasize=256, batch_acquire=32, num_acquire=1, device='
 
         return metrics
 
+    
+
     class direct_model(torch.nn.Module):
         def __init__(self, model, unrolling):
             super().__init__()
@@ -155,6 +162,32 @@ def experiment_0(initial_datasize=256, batch_acquire=32, num_acquire=1, device='
                 trajectory.append(x)
             return torch.cat(trajectory, dim=1) # [batch_size, unrolling, nx]
 
+    class direct_combination_model(torch.nn.Module):
+        def __init__(self, models, unrolling):
+            super().__init__()
+            self.models = models
+            self.unrolling = unrolling
+            self.num_models = len(models)
+            self.combination = torch.randint(0, self.num_models, (self.unrolling,))
+        def forward(self, x):
+            for _ in range(self.unrolling):
+                x = self.models[self.combination[_]](x)
+            return x
+
+    class trajectory_combination_model(torch.nn.Module):
+        def __init__(self, models, unrolling):
+            super().__init__()
+            self.models = models
+            self.unrolling = unrolling
+            self.num_models = len(models)
+            self.combination = torch.randint(0, self.num_models, (self.unrolling,))
+        def forward(self, x):
+            trajectory = []
+            for _ in range(self.unrolling):
+                x = self.models[self.combination[_]](x)
+                trajectory.append(x)
+            return torch.cat(trajectory, dim=1)
+
     timestep = (Traj_dataset.traj_train.shape[1] - 1) // (nt - 1) # 10
     assert timestep == 10
 
@@ -173,6 +206,7 @@ def experiment_0(initial_datasize=256, batch_acquire=32, num_acquire=1, device='
 
     results = {'datasize': [], 'rel_l2': [], 'rel_l2_trajectory': []}
 
+
     results['datasize'].append(train_idxs.shape[0])
     rel_l2_list = [test(direct_model(model, nt-1))[1].mean().item() for model in ensemble]
     rel_l2_trajectory_list = [test_trajectory(trajectory_model(model, nt-1))[1].mean().item() for model in ensemble]
@@ -180,13 +214,15 @@ def experiment_0(initial_datasize=256, batch_acquire=32, num_acquire=1, device='
     results['rel_l2_trajectory'].append(torch.mean(torch.tensor(rel_l2_trajectory_list)).item())
     print(f'Datasize: {results["datasize"][-1]}, Rel_l2: {results["rel_l2"][-1]}, Rel_l2_trajectory: {results["rel_l2_trajectory"][-1]}')
 
-    
+
     for i in range(num_acquire):
         if features == 'direct':
-            unrolled_ensemble = [direct_model(model, nt-1) for model in ensemble]
+            # unrolled_ensemble = [direct_model(model, nt-1) for model in ensemble]
+            unrolled_ensemble = [direct_combination_model(ensemble, nt-1) for _ in range(100)]
         elif features == 'trajectory':
-            unrolled_ensemble = [trajectory_model(model, nt-1) for model in ensemble]
+            unrolled_ensemble = [trajectory_combination_model(ensemble, nt-1) for _ in range(100)]
         new_idxs = select(unrolled_ensemble, X_train, X_pool, batch_acquire, selection_method=selection_method, acquisition_function=acquisition_function, device=device)
+
         # new_idxs = select_var(ensemble, X_pool, batch_acquire)
 
         new_idxs = new_idxs.to(device)
@@ -228,6 +264,7 @@ def run_experiment(experiment, equation, **cfg):
     cfg.update(CFG_DICT[experiment])
 
     datasize_list = [int(datasize) for datasize in 2 ** np.linspace(5,9,5)]
+    # datasize_list = [20,30]
     results['initial_datasize_list'] = datasize_list
 
     for seed in range(5):
@@ -236,7 +273,7 @@ def run_experiment(experiment, equation, **cfg):
         results[seed] = {}
         
         for initial_datasize in datasize_list:
-            results_instance = experiment_0(initial_datasize=initial_datasize, batch_acquire=batch_acquire, num_acquire=1, device=device, **cfg)
+            results_instance = experiment_al_comb(initial_datasize=initial_datasize, batch_acquire=batch_acquire, num_acquire=1, device=device, **cfg)
             results[seed][initial_datasize] = results_instance
         print(results[seed])
 
@@ -260,7 +297,7 @@ def main():
     results = run_experiment(args.experiment, args.equation, unrolling=args.unrolling)
 
     print(results)
-    save_path = get_results_path() + f'/results_al_{args.equation}_{args.experiment}_{time.strftime("%Y%m%d-%H%M%S")}.pt'
+    save_path = get_results_path() + f'/results_al_comb_{args.equation}_{args.experiment}_{time.strftime("%Y%m%d-%H%M%S")}.pt'
     torch.save(results, save_path)
     print(f'Results saved to {save_path}')
 
