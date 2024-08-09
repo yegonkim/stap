@@ -312,7 +312,7 @@ class TensorFeatureData(FeatureData):
         """
         :param data: Tensor of shape [n_samples, ...], usually [n_samples, n_features]
         """
-        super().__init__(n_samples=data.shape[-2], device=data.device, dtype=data.dtype)
+        super().__init__(n_samples=data.shape[0], device=data.device, dtype=data.dtype)
         self.data = data
 
     def get_tensor_impl_(self, idxs: Indexes) -> torch.Tensor:
