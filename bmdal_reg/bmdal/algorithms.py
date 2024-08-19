@@ -295,6 +295,8 @@ class BatchSelectorImpl:
 
         self.features = {key: [Features(fm, feature_data) for fm in feature_maps]
                          for key, feature_data in self.data.items()}
+        
+        # print(self.features)
 
         if base_kernel in ['ll', 'grad', 'predictions']:
             for i in range(self.n_models):

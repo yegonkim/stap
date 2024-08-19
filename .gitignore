@@ -3,3 +3,7 @@ old/
 __pycache__/
 # .ipynb
 2302.08981
+wandb/
+outputs/
+results/
+repos/

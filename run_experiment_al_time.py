@@ -11,7 +11,7 @@ import time
 from eval_utils import compute_metrics
 from custom_paths import get_results_path
 from utils import set_seed, flatten_configdict
-from acquisition.acquirers import select
+from acquisition.acquirers import select, select_time
 
 from omegaconf import OmegaConf
 import hydra
@@ -37,8 +37,77 @@ def run_experiment(cfg):
     lr = cfg.train.lr
     batch_size = cfg.train.batch_size
 
-    def train(X_train, Y_train, **kwargs):
+    # def train(X, Y, train_nts, **kwargs):
+    #     assert unrolling == 0
+        
+    #     acquire_step = kwargs.get('acquire_step', 0)
+
+    #     model = FNO(n_modes=(256, ), hidden_channels=64,
+    #                 in_channels=1, out_channels=1)
+
+    #     model = model.to(device)
+
+    #     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    #     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs)
+    #     criterion = torch.nn.MSELoss()
+
+    #     mask = train_nts > 0
+    #     X = X[mask]
+    #     Y = Y[mask]
+    #     train_nts = train_nts[mask]
+
+    #     dataset = torch.utils.data.TensorDataset(X, Y, train_nts)
+    #     dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+    #     model.train()
+    #     for epoch in range(epochs):
+    #         model.train()
+    #         max_unrolling = epoch if epoch <= unrolling else unrolling
+    #         unrolling_list = [r for r in range(max_unrolling + 1)]
+
+    #         # Loop over every epoch as often as the number of timesteps in one trajectory.
+    #         # Since the starting point is randomly drawn, this in expectation has every possible starting point/sample combination of the training data.
+    #         # Therefore in expectation the whole available training information is covered.
+    #         total_loss = 0
+    #         for i in range(nt):
+    #             for x, y, nts in dataloader:
+    #                 optimizer.zero_grad()
+    #                 x, y = x.to(device), y.to(device) # y has shape [cfg.train.batch_size, nt, nx]
+
+    #                 unrolled = random.choice(unrolling_list)
+    #                 bs = x.shape[0]
+
+    #                 # steps = [t for t in range(0, nt - 1 - unrolled)]
+    #                 # random_steps = random.choices(steps, k=bs)
+    #                 assert torch.all(nts - unrolled - 1 > 0)
+    #                 random_steps = torch.floor((nts - unrolled) * torch.rand(bs)).to(dtype=torch.int64)
+
+    #                 inputs = torch.stack([y[b, random_steps[b]] for b in range(bs)], dim=0).unsqueeze(1)
+    #                 outputs = torch.stack([y[b, random_steps[b] + unrolled+1] for b in range(bs)], dim=0).unsqueeze(1)
+
+    #                 # pushforward
+    #                 with torch.no_grad():
+    #                     model.eval()
+    #                     for _ in range(unrolled):
+    #                         inputs = model(inputs)
+    #                     model.train()
+                    
+    #                 pred = model(inputs)
+    #                 loss = criterion(pred, outputs)
+
+    #                 # loss = torch.sqrt(loss)
+    #                 loss.backward()
+    #                 optimizer.step()
+    #                 total_loss += loss.item()
+    #         scheduler.step()
+    #         wandb.log({f'train/loss_{acquire_step}': total_loss})
+    #     return model
+    
+    def train(Y, train_nts, **kwargs):
+        assert unrolling == 0
+
         acquire_step = kwargs.get('acquire_step', 0)
+
         model = FNO(n_modes=(256, ), hidden_channels=64,
                     in_channels=1, out_channels=1)
 
@@ -48,7 +117,12 @@ def run_experiment(cfg):
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs)
         criterion = torch.nn.MSELoss()
 
-        dataset = torch.utils.data.TensorDataset(X_train, Y_train)
+        data = []
+        for b in range(Y.shape[0]):
+            for t in range(train_nts[b].item()):
+                data.append((Y, ))
+
+        dataset = torch.utils.data.TensorDataset(X, Y, train_nts)
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
         model.train()
@@ -62,15 +136,18 @@ def run_experiment(cfg):
             # Therefore in expectation the whole available training information is covered.
             total_loss = 0
             for i in range(nt):
-                for x, y in dataloader:
+                for x, y, nts in dataloader:
                     optimizer.zero_grad()
                     x, y = x.to(device), y.to(device) # y has shape [cfg.train.batch_size, nt, nx]
 
                     unrolled = random.choice(unrolling_list)
                     bs = x.shape[0]
 
-                    steps = [t for t in range(0, nt - 1 - unrolled)]
-                    random_steps = random.choices(steps, k=bs)
+                    # steps = [t for t in range(0, nt - 1 - unrolled)]
+                    # random_steps = random.choices(steps, k=bs)
+                    assert torch.all(nts - unrolled - 1 > 0)
+                    random_steps = torch.floor((nts - unrolled) * torch.rand(bs)).to(dtype=torch.int64)
+
                     inputs = torch.stack([y[b, random_steps[b]] for b in range(bs)], dim=0).unsqueeze(1)
                     outputs = torch.stack([y[b, random_steps[b] + unrolled+1] for b in range(bs)], dim=0).unsqueeze(1)
 
@@ -89,7 +166,7 @@ def run_experiment(cfg):
                     optimizer.step()
                     total_loss += loss.item()
             scheduler.step()
-            # wandb.log({f'train/loss_{acquire_step}': total_loss})
+            wandb.log({f'train/loss_{acquire_step}': total_loss})
         return model
 
     def test(model):
@@ -158,39 +235,41 @@ def run_experiment(cfg):
             return torch.cat(trajectory, dim=1) # [cfg.train.batch_size, unrolling, nx]
 
     timestep = (Traj_dataset.traj_train.shape[1] - 1) // (nt - 1) # 10
-    assert timestep == 10
+    assert timestep == 10 # hardcoded for now (130/ (14-1) = 10)
 
     X = Traj_dataset.traj_train[:,0].unsqueeze(1).to(device)
     Y = Traj_dataset.traj_train[:,0::timestep].to(device)
 
-    train_idxs = torch.arange(initial_datasize, device=device)
-    pool_idxs = torch.arange(initial_datasize, X.shape[0], device=device)
+    train_nts = torch.ones(X.shape[0], device=device, dtype=torch.int64)
+    # values are between 1 and 14, inclusive
+    # 1 means only initial data, 14 means all data
 
-    X_train = X[train_idxs]
-    Y_train = Y[train_idxs]
+    train_nts[:initial_datasize] = nt
+    # train_idxs = torch.arange(initial_datasize, device=device)
+    # pool_idxs = torch.arange(initial_datasize, X.shape[0], device=device)
 
-    X_pool = X[pool_idxs]
+    # X_train = X[train_idxs]
+    # Y_train = Y[train_idxs]
 
-    ensemble = [train(X_train, Y_train) for _ in tqdm(range(ensemble_size))]
+    # X_pool = X[pool_idxs]
 
-    results = {'datasize': [], 'rel_l2': [], 'rel_l2_trajectory': []}
+    ensemble = [train(X, Y, train_nts, acquire_step=0) for _ in tqdm(range(ensemble_size))]
 
-    acquire_step = 0
+    results = {'datasize': [], 'l2': [], 'rel_l2': [], 'mse': []}
+
     results['datasize'].append(train_idxs.shape[0])
-    rel_l2_list = [test(direct_model(model, nt-1))[1].mean().item() for model in ensemble]
-    rel_l2_trajectory_list = [test_trajectory(trajectory_model(model, nt-1))[1].mean().item() for model in ensemble]
-    results['rel_l2'].append(torch.mean(torch.tensor(rel_l2_list)).item())
-    results['rel_l2_trajectory'].append(torch.mean(torch.tensor(rel_l2_trajectory_list)).item())
-    print(f'Datasize: {results["datasize"][-1]}, Rel_l2: {results["rel_l2"][-1]}, Rel_l2_trajectory: {results["rel_l2_trajectory"][-1]}')
+    # rel_l2_list = [test(direct_model(model, nt-1))[1].mean().item() for model in ensemble]
+    metrics_list = torch.tensor([test_trajectory(trajectory_model(model, nt-1)) for model in ensemble]) # [ensemble_size, 3, datasize]
+    results['l2'].append(metrics_list[:, 0].mean().item())
+    results['rel_l2'].append(metrics_list[:, 1].mean().item())
+    results['mse'].append(metrics_list[:, 2].mean().item())
+    print(f'Datasize: {results["datasize"][-1]}, L2: {results["l2"][-1]}, Rel_l2: {results["rel_l2"][-1]}, MSE: {results["mse"][-1]}')
 
-    wandb.log({'datasize': results['datasize'][-1], f'rel_l2_{acquire_step}': results['rel_l2'][-1], f'rel_l2_trajectory_{acquire_step}': results['rel_l2_trajectory'][-1]})
+    # wandb.log({'datasize': results['datasize'][-1], f'rel_l2_{acquire_step}': results['rel_l2'][-1], f'rel_l2_trajectory_{acquire_step}': results['rel_l2_trajectory'][-1]})
+    wandb.log({'datasize': results['datasize'][-1], f'l2': results['l2'][-1], f'rel_l2': results['rel_l2'][-1], f'mse': results['mse'][-1]})
     
     for acquire_step in range(1, num_acquire+1):
-        if selection_feature == 'direct':
-            unrolled_ensemble = [direct_model(model, nt-1) for model in ensemble]
-        elif selection_feature == 'trajectory':
-            unrolled_ensemble = [trajectory_model(model, nt-1) for model in ensemble]
-        new_idxs = select(unrolled_ensemble, X_train, X_pool, batch_acquire, selection_method=selection_method, device=device)
+        new_idxs = select_time(ensemble, Y, train_nts, batch_acquire, selection_method=selection_method, device=device)
         # new_idxs = select_var(ensemble, X_pool, batch_acquire)
 
         new_idxs = new_idxs.to(device)
@@ -201,25 +280,26 @@ def run_experiment(cfg):
         train_idxs = torch.cat([train_idxs, pool_idxs[logical_new_idxs]], dim=-1)
         pool_idxs = pool_idxs[~logical_new_idxs]
 
-        X_train = X[train_idxs]
-        Y_train = Y[train_idxs]
+        X = Traj_dataset.traj_train[:,0].unsqueeze(1).to(device)
+        Y = Traj_dataset.traj_train[:,0::timestep].to(device)
 
-        X_pool = X[pool_idxs]
+        train_nts = torch.zeros(X.shape[0], device=device, dtype=torch.int64)
 
-        ensemble = [train(X_train, Y_train) for _ in tqdm(range(ensemble_size))]
+        ensemble = [train(X, Y, train_nts, acquire_step=0) for _ in tqdm(range(ensemble_size))]
 
         results['datasize'].append(train_idxs.shape[0])
-        rel_l2_list = [test(direct_model(model, nt-1))[1].mean().item() for model in ensemble]
-        rel_l2_trajectory_list = [test_trajectory(trajectory_model(model, nt-1))[1].mean().item() for model in ensemble]
-        results['rel_l2'].append(torch.mean(torch.tensor(rel_l2_list)).item())
-        results['rel_l2_trajectory'].append(torch.mean(torch.tensor(rel_l2_trajectory_list)).item())
-        print(f'Datasize: {results["datasize"][-1]}, Rel_l2: {results["rel_l2"][-1]}, Rel_l2_trajectory: {results["rel_l2_trajectory"][-1]}')
+        metrics_list = torch.tensor([test_trajectory(trajectory_model(model, nt-1)) for model in ensemble]) # [ensemble_size, 3, datasize]
+        results['l2'].append(metrics_list[:, 0].mean().item())
+        results['rel_l2'].append(metrics_list[:, 1].mean().item())
+        results['mse'].append(metrics_list[:, 2].mean().item())
+        print(f'Datasize: {results["datasize"][-1]}, L2: {results["l2"][-1]}, Rel_l2: {results["rel_l2"][-1]}, MSE: {results["mse"][-1]}')
 
-        wandb.log({'datasize': results['datasize'][-1], f'rel_l2_{acquire_step}': results['rel_l2'][-1], f'rel_l2_trajectory_{acquire_step}': results['rel_l2_trajectory'][-1]})
+        # wandb.log({'datasize': results['datasize'][-1], f'rel_l2_{acquire_step}': results['rel_l2'][-1], f'rel_l2_trajectory_{acquire_step}': results['rel_l2_trajectory'][-1]})
+        wandb.log({'datasize': results['datasize'][-1], f'rel_l2': results['rel_l2'][-1], f'rel_l2_trajectory': results['rel_l2_trajectory'][-1]})
     
     return results
 
-@hydra.main(version_base=None, config_path="cfg", config_name="config.yaml")
+@hydra.main(version_base=None, config_path="cfg_time", config_name="config.yaml")
 def main(cfg: OmegaConf):
     print("Input arguments:")
     print(OmegaConf.to_yaml(cfg))

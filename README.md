@@ -90,3 +90,49 @@ bash tmux_scripts/al.sh
 bash tmux_scripts/al_2.sh
 bash tmux_scripts/al_comb.sh
 bash tmux_scripts/al_comb_2.sh
+
+
+python run_experiment_al.py --equation KdV --experiment direct_lcmd --unrolling 0 --batch_acquire 8
+python run_experiment_al.py --equation KdV --experiment direct_lcmd --unrolling 0 --batch_acquire 16
+python run_experiment_al.py --equation KdV --experiment direct_lcmd --unrolling 0 --batch_acquire 32
+python run_experiment_al.py --equation KdV --experiment direct_lcmd --unrolling 0 --batch_acquire 64
+python run_experiment_al.py --equation KdV --experiment direct_lcmd --unrolling 0 --batch_acquire 128
+python run_experiment_al.py --equation KdV --experiment direct_lcmd --unrolling 0 --batch_acquire 256
+
+python run_experiment_al.py --equation Burgers --experiment direct_lcmd --unrolling 1 --batch_acquire 8
+python run_experiment_al.py --equation Burgers --experiment direct_lcmd --unrolling 1 --batch_acquire 16
+python run_experiment_al.py --equation Burgers --experiment direct_lcmd --unrolling 1 --batch_acquire 32
+python run_experiment_al.py --equation Burgers --experiment direct_lcmd --unrolling 1 --batch_acquire 64
+python run_experiment_al.py --equation Burgers --experiment direct_lcmd --unrolling 1 --batch_acquire 128
+python run_experiment_al.py --equation Burgers --experiment direct_lcmd --unrolling 1 --batch_acquire 256
+
+python run_experiment_al.py --equation KS --experiment direct_lcmd --unrolling 0 --batch_acquire 8
+python run_experiment_al.py --equation KS --experiment direct_lcmd --unrolling 0 --batch_acquire 16
+python run_experiment_al.py --equation KS --experiment direct_lcmd --unrolling 0 --batch_acquire 32
+python run_experiment_al.py --equation KS --experiment direct_lcmd --unrolling 0 --batch_acquire 64
+python run_experiment_al.py --equation KS --experiment direct_lcmd --unrolling 0 --batch_acquire 128
+python run_experiment_al.py --equation KS --experiment direct_lcmd --unrolling 0 --batch_acquire 256
+
+
+
+python run_experiment_al.py --equation KdV --experiment direct_random --unrolling 0 --batch_acquire 8
+python run_experiment_al.py --equation KdV --experiment direct_random --unrolling 0 --batch_acquire 16
+python run_experiment_al.py --equation KdV --experiment direct_random --unrolling 0 --batch_acquire 32
+python run_experiment_al.py --equation KdV --experiment direct_random --unrolling 0 --batch_acquire 64
+python run_experiment_al.py --equation KdV --experiment direct_random --unrolling 0 --batch_acquire 128
+python run_experiment_al.py --equation KdV --experiment direct_random --unrolling 0 --batch_acquire 256
+
+python run_experiment_al.py --equation Burgers --experiment direct_random --unrolling 1 --batch_acquire 8
+python run_experiment_al.py --equation Burgers --experiment direct_random --unrolling 1 --batch_acquire 16
+python run_experiment_al.py --equation Burgers --experiment direct_random --unrolling 1 --batch_acquire 32
+python run_experiment_al.py --equation Burgers --experiment direct_random --unrolling 1 --batch_acquire 64
+python run_experiment_al.py --equation Burgers --experiment direct_random --unrolling 1 --batch_acquire 128
+python run_experiment_al.py --equation Burgers --experiment direct_random --unrolling 1 --batch_acquire 256
+
+python run_experiment_al.py --equation KS --experiment direct_random --unrolling 0 --batch_acquire 8
+python run_experiment_al.py --equation KS --experiment direct_random --unrolling 0 --batch_acquire 16
+python run_experiment_al.py --equation KS --experiment direct_random --unrolling 0 --batch_acquire 32
+python run_experiment_al.py --equation KS --experiment direct_random --unrolling 0 --batch_acquire 64
+python run_experiment_al.py --equation KS --experiment direct_random --unrolling 0 --batch_acquire 128
+python run_experiment_al.py --equation KS --experiment direct_random --unrolling 0 --batch_acquire 256
+
