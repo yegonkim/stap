@@ -17,6 +17,11 @@ def torch_delete(tensor, indices):
     mask[indices] = False
     return tensor[mask]
 
+def torch_expand(tensor, dim, copies):
+    """Expand tensor along a dimension using torch.expand() for memory efficiency."""
+    shape = list(tensor.shape)
+    shape[dim] = shape[dim] * copies
+    return tensor.expand(*shape)
 
 def flatten_configdict(
     cfg: OmegaConf,
@@ -26,3 +31,34 @@ def flatten_configdict(
     cfgdict = pd.json_normalize(cfgdict, sep=sep)
 
     return cfgdict.to_dict(orient="records")[0]
+
+class direct_model(torch.nn.Module):
+    def __init__(self, model, unrolling):
+        super().__init__()
+        self.model = model
+        self.unrolling = unrolling
+    def forward(self, x):
+        for _ in range(self.unrolling):
+            x = self.model(x)
+        return x
+    
+class trajectory_model(torch.nn.Module):
+    def __init__(self, model, unrolling):
+        super().__init__()
+        self.model = model
+        self.unrolling = unrolling
+    def forward(self, x):
+        trajectory = []
+        for _ in range(self.unrolling):
+            x = self.model(x)
+            trajectory.append(x)
+        return torch.cat(trajectory, dim=1) # [cfg.train.batch_size, unrolling, nx]
+    
+class split_model(torch.nn.Module):
+    def __init__(self, model, batch_size):
+        super().__init__()
+        self.model = model
+        self.batch_size = batch_size
+    def forward(self, x):
+        y = [self.model(x_split) for x_split in x.split(self.batch_size)]
+        return torch.cat(y, dim=0)

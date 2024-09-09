@@ -14,13 +14,13 @@ def constant(X, ensemble, **cfg):
     return torch.zeros(X.shape[0], device=X.device)
 
 def entropy(X, ensemble, **cfg):
-    std = cfg.get('std', 1)
+    std = cfg.get('std', 1e-2)
     bs, bs_acquire = X.shape[:2]
     features = get_features_ycov(X.reshape(bs*bs_acquire, *X.shape[2:]), ensemble) # [bs*bs_acquire, N, dim]
     features = features.view(bs, bs_acquire, *features.shape[1:]) # [bs, bs_acquire, N, dim]
     covariance_like = torch.einsum('bcnd,bcmd->bnm', features, features) # [bs, N, N]
     log_det_cov = torch.logdet(covariance_like + std**2*torch.eye(covariance_like.shape[1], device=features.device).unsqueeze(0)) # [bs]
-    score = log_det_cov # [bs]
+    score = log_det_cov / 2 + (features.shape[1] + features.shape[3]) / 2 * torch.log(torch.tensor(2 * 3.14159265358979323846, device=features.device))
     return score
 
 def variance(X, ensemble, **cfg):

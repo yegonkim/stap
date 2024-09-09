@@ -1,14 +1,17 @@
 #!/bin/bash
+EQ='KdV'
+
 for SEED in 0 1 2 3 4
 do
-    for EQ in 'KdV' 'Burgers' 'KS'
-    do
-        for SIZE in 32 64 128 256 512
-        do
-            # python run_experiment_al.py task=$EQ selection_method=random ensemble_size=2 seed=$SEED initial_datasize=$SIZE batch_acquire=1 num_acquire=32
-            python run_experiment_al.py task=$EQ selection_method=variance ensemble_size=2 seed=$SEED initial_datasize=$SIZE batch_acquire=1 num_acquire=32
-            # python run_experiment_al.py task=$EQ selection_method=stochastic ensemble_size=2 seed=$SEED initial_datasize=$SIZE batch_acquire=1 num_acquire=32
-        done
-    done
-done
+    python run_experiment_whole_part.py task=$EQ seed=$SEED wandb.project=${EQ}_stable_mse_9_8 datasize=10000 whole_initial_datasize=0 num_acquire=10 timesteps=14 initial_datasize=30 batch_acquire=30 
+    python run_experiment_whole_part.py task=$EQ seed=$SEED wandb.project=${EQ}_stable_mse_9_8 datasize=10000 whole_initial_datasize=0 num_acquire=10 timesteps=7 initial_datasize=65 batch_acquire=65
+    python run_experiment_whole_part.py task=$EQ seed=$SEED wandb.project=${EQ}_stable_mse_9_8 datasize=10000 whole_initial_datasize=0 num_acquire=10 timesteps=2 initial_datasize=390 batch_acquire=390
 
+    python run_experiment_whole_part.py task=$EQ seed=$SEED wandb.project=${EQ}_stable_mse_9_8 datasize=10000 whole_initial_datasize=60 num_acquire=10 timesteps=14 initial_datasize=0 batch_acquire=30 
+    python run_experiment_whole_part.py task=$EQ seed=$SEED wandb.project=${EQ}_stable_mse_9_8 datasize=10000 whole_initial_datasize=60 num_acquire=10 timesteps=7 initial_datasize=0 batch_acquire=65
+    python run_experiment_whole_part.py task=$EQ seed=$SEED wandb.project=${EQ}_stable_mse_9_8 datasize=10000 whole_initial_datasize=60 num_acquire=10 timesteps=2 initial_datasize=0 batch_acquire=390
+
+    python run_experiment_whole_part.py task=$EQ seed=$SEED wandb.project=${EQ}_stable_mse_9_8 datasize=10000 whole_initial_datasize=120 num_acquire=10 timesteps=14 initial_datasize=0 batch_acquire=30 
+    python run_experiment_whole_part.py task=$EQ seed=$SEED wandb.project=${EQ}_stable_mse_9_8 datasize=10000 whole_initial_datasize=120 num_acquire=10 timesteps=7 initial_datasize=0 batch_acquire=65
+    python run_experiment_whole_part.py task=$EQ seed=$SEED wandb.project=${EQ}_stable_mse_9_8 datasize=10000 whole_initial_datasize=120 num_acquire=10 timesteps=2 initial_datasize=0 batch_acquire=390
+done

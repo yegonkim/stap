@@ -1,0 +1,35 @@
+# @package _global_
+equation: 
+nt: 14
+
+datasize: 1000
+testsize: 10000
+# exponential_data: False
+initial_datasize: 128
+batch_acquire: 32
+num_acquire: 4 # 128 + 32*4 = 256
+ensemble_size: 5
+num_random_pool: 1000
+
+scenario: fixed # fixed, flexible
+initial_selection_method: random # random, variance, stochastic, lcmd
+post_selection_method: all # all, variance_prior, variance_direct
+optimization_method: greedy # greedy, individual
+flexible_selection_method: random # random, variance, stochastic, lcmd
+
+comment: 
+
+seed: 1
+device: cuda
+eval_batch_size: 256
+
+train:
+  unrolling: 0
+  epochs: 100
+  lr: 0.001
+  batch_size: 32
+
+wandb:
+  use: True
+  project: 
+  entity: kaist_yegonkim

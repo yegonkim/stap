@@ -10,8 +10,8 @@ import time
 
 from eval_utils import compute_metrics
 from custom_paths import get_results_path
-from utils import set_seed, flatten_configdict
-from acquisition.acquirers import select, select_time
+from utils import set_seed, flatten_configdict, trajectory_model, direct_model, split_model
+from acquisition.acquirers_batched import Acquirer_batched
 
 from omegaconf import OmegaConf
 import hydra
@@ -33,14 +33,14 @@ def run_experiment(cfg):
     unrolling = cfg.train.unrolling
     nt = cfg.nt
     ensemble_size = cfg.ensemble_size
-    selection_method = cfg.selection_method
-    # batch_acquire = cfg.batch_acquire
     num_acquire = cfg.num_acquire
-    initial_time_steps = cfg.initial_time_steps
     device = cfg.device
     epochs = cfg.train.epochs
     lr = cfg.train.lr
     batch_size = cfg.train.batch_size
+    initial_datasize = cfg.initial_datasize
+    whole_initial_datasize = cfg.whole_initial_datasize
+    batch_acquire = cfg.batch_acquire
 
     def train(Y, train_nts, **kwargs):
         assert unrolling == 0
@@ -51,6 +51,9 @@ def run_experiment(cfg):
                     in_channels=1, out_channels=1)
 
         model = model.to(device)
+
+        if (train_nts-1).sum().item() == 0:
+            return model
 
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs)
@@ -95,7 +98,7 @@ def run_experiment(cfg):
         Y_test = Traj_dataset.traj_test[:,-1,:].unsqueeze(1).to(device)
 
         testset = torch.utils.data.TensorDataset(X_test, Y_test)
-        testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False)
+        testloader = torch.utils.data.DataLoader(testset, batch_size=cfg.eval_batch_size, shuffle=False)
 
         model.eval()
     
@@ -110,12 +113,17 @@ def run_experiment(cfg):
 
         return metrics
     
+
     def test_trajectory(model):
-        X_test = Traj_dataset.traj_test[:,0].unsqueeze(1).to(device)
-        Y_test = Traj_dataset.traj_test[:,timestep::timestep].to(device)
+        X_test = Traj_dataset.traj_test[:,0:(nt-1)*timestep:timestep].to(device) # [datasize, nt-1, nx]
+        Y_test = Traj_dataset.traj_test[:,timestep:nt*timestep:timestep].to(device) # [datasize, nt-1, nx]
+        X_test = X_test.flatten(0, 1).unsqueeze(1) # [datasize*(nt-1), 1, nx]
+        Y_test = Y_test.flatten(0, 1).unsqueeze(1) # [datasize*(nt-1), 1, nx]
+        # X_test = Traj_dataset.traj_test[:,0].unsqueeze(1).to(device)
+        # Y_test = Traj_dataset.traj_test[:,timestep::timestep].to(device)
 
         testset = torch.utils.data.TensorDataset(X_test, Y_test)
-        testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False)
+        testloader = torch.utils.data.DataLoader(testset, batch_size=cfg.eval_batch_size, shuffle=False)
 
         model.eval()
     
@@ -133,27 +141,29 @@ def run_experiment(cfg):
 
         return metrics
 
-    class direct_model(torch.nn.Module):
-        def __init__(self, model, unrolling):
-            super().__init__()
-            self.model = model
-            self.unrolling = unrolling
-        def forward(self, x):
-            for _ in range(self.unrolling):
-                x = self.model(x)
-            return x
+    def test_per_trajectory(model):
+        X_test = Traj_dataset.traj_test[:,0].unsqueeze(1).to(device)
+        Y_test = Traj_dataset.traj_test[:,timestep::timestep].to(device)
+
+        testset = torch.utils.data.TensorDataset(X_test, Y_test)
+        testloader = torch.utils.data.DataLoader(testset, batch_size=cfg.eval_batch_size, shuffle=False)
+
+        model.eval()
+    
+        Y_test_pred = []
+        with torch.no_grad():
+            for x, y in testloader:
+                x, y = x.to(device), y.to(device)
+                y_pred = model(x)
+                # print(y_pred.shape, y.shape)
+                assert y_pred.shape == y.shape
+                Y_test_pred.append(y_pred)
+            Y_test_pred = torch.cat(Y_test_pred, dim=0).to(device)
         
-    class trajectory_model(torch.nn.Module):
-        def __init__(self, model, unrolling):
-            super().__init__()
-            self.model = model
-            self.unrolling = unrolling
-        def forward(self, x):
-            trajectory = []
-            for _ in range(self.unrolling):
-                x = self.model(x)
-                trajectory.append(x)
-            return torch.cat(trajectory, dim=1) # [cfg.train.batch_size, unrolling, nx]
+        metrics = compute_metrics(Y_test, Y_test_pred, d=2)
+
+        return metrics
+
 
     timestep = (Traj_dataset.traj_train.shape[1] - 1) // (nt - 1) # 10
     assert timestep == 10 # hardcoded for now (130/ (14-1) = 10)
@@ -165,52 +175,45 @@ def run_experiment(cfg):
     # values are between 1 and 14, inclusive
     # 1 means only initial data, 14 means all data
 
-    train_nts[:initial_time_steps//(nt-1)] = nt
-    if initial_time_steps % (nt-1) != 0:
-        train_nts[initial_time_steps//(nt-1)] = initial_time_steps % (nt-1)
-
-    # train_idxs = torch.arange(initial_datasize, device=device)
-    # pool_idxs = torch.arange(initial_datasize, X.shape[0], device=device)
-
-    # X_train = X[train_idxs]
-    # Y_train = Y[train_idxs]
-
-    # X_pool = X[pool_idxs]
+    train_nts[:whole_initial_datasize] = nt
+    train_nts[whole_initial_datasize:whole_initial_datasize+initial_datasize] = cfg.timesteps
 
     ensemble = [train(Y, train_nts, acquire_step=0) for _ in tqdm(range(ensemble_size))]
 
-    results = {'datasize': [], 'l2': [], 'rel_l2': [], 'mse': []}
+    results = {'datasize': [], 'l2': [], 'rel_l2_trajectory': [], 'mse': [], 'rel_l2': []}
 
     results['datasize'].append((train_nts-1).sum().item())
     # rel_l2_list = [test(direct_model(model, nt-1))[1].mean().item() for model in ensemble]
-    metrics_list = torch.stack([torch.stack(test_trajectory(trajectory_model(model, nt-1))) for model in ensemble]) # [ensemble_size, 3, datasize]
+    metrics_list = torch.stack([torch.stack(test_per_trajectory(trajectory_model(model, nt-1))) for model in ensemble]) # [ensemble_size, 3, datasize]
     results['l2'].append(metrics_list[:, 0, :].mean().item())
-    results['rel_l2'].append(metrics_list[:, 1, :].mean().item())
+    results['rel_l2_trajectory'].append(metrics_list[:, 1, :].mean().item())
     results['mse'].append(metrics_list[:, 2, :].mean().item())
-    print(f'Datasize: {results["datasize"][-1]}, L2: {results["l2"][-1]}, Rel_l2: {results["rel_l2"][-1]}, MSE: {results["mse"][-1]}')
+    metrics_list = torch.stack([torch.stack(test_trajectory(model)) for model in ensemble]) # [ensemble_size, 3, datasize]
+    results['rel_l2'].append(metrics_list[:, 1, :].mean().item())
+    print(f'Datasize: {results["datasize"][-1]}, L2: {results["l2"][-1]}, Rel_l2: {results["rel_l2"][-1]}, MSE: {results["mse"][-1]}, Rel_l2_trajectory: {results["rel_l2_trajectory"][-1]}')
 
     # wandb.log({'datasize': results['datasize'][-1], f'rel_l2_{acquire_step}': results['rel_l2'][-1], f'rel_l2_trajectory_{acquire_step}': results['rel_l2_trajectory'][-1]})
-    wandb.log({'datasize': results['datasize'][-1], f'l2': results['l2'][-1], f'rel_l2': results['rel_l2'][-1], f'mse': results['mse'][-1]})
+    wandb.log({'datasize': results['datasize'][-1], f'l2': results['l2'][-1], f'rel_l2': results['rel_l2'][-1], f'mse': results['mse'][-1], f'rel_l2_trajectory': results['rel_l2_trajectory'][-1]})
     
     for acquire_step in range(1, num_acquire+1):
-        train_nts = select_time(ensemble, Y, train_nts, (train_nts-1).sum().item(), selection_method=selection_method, mode=cfg.acquisition_mode, device=device)
-
-        X = Traj_dataset.traj_train[:,0].unsqueeze(1).to(device)
-        Y = Traj_dataset.traj_train[:,0::timestep].to(device)
-
+        train_nts[whole_initial_datasize+initial_datasize+(acquire_step-1)*batch_acquire:whole_initial_datasize+initial_datasize+acquire_step*batch_acquire] = cfg.timesteps
         ensemble = [train(Y, train_nts, acquire_step=acquire_step) for _ in tqdm(range(ensemble_size))]
 
         results['datasize'].append((train_nts-1).sum().item())
-        metrics_list = torch.stack([torch.stack(test_trajectory(trajectory_model(model, nt-1))) for model in ensemble]) # [ensemble_size, 3, datasize]
+        # rel_l2_list = [test(direct_model(model, nt-1))[1].mean().item() for model in ensemble]
+        metrics_list = torch.stack([torch.stack(test_per_trajectory(trajectory_model(model, nt-1))) for model in ensemble]) # [ensemble_size, 3, datasize]
         results['l2'].append(metrics_list[:, 0, :].mean().item())
-        results['rel_l2'].append(metrics_list[:, 1, :].mean().item())
+        results['rel_l2_trajectory'].append(metrics_list[:, 1, :].mean().item())
         results['mse'].append(metrics_list[:, 2, :].mean().item())
-        print(f'Datasize: {results["datasize"][-1]}, L2: {results["l2"][-1]}, Rel_l2: {results["rel_l2"][-1]}, MSE: {results["mse"][-1]}')
-        wandb.log({'datasize': results['datasize'][-1], f'l2': results['l2'][-1], f'rel_l2': results['rel_l2'][-1], f'mse': results['mse'][-1]})
-    
+        metrics_list = torch.stack([torch.stack(test_trajectory(model)) for model in ensemble]) # [ensemble_size, 3, datasize]
+        results['rel_l2'].append(metrics_list[:, 1, :].mean().item())
+        print(f'Datasize: {results["datasize"][-1]}, L2: {results["l2"][-1]}, Rel_l2: {results["rel_l2"][-1]}, MSE: {results["mse"][-1]}, Rel_l2_trajectory: {results["rel_l2_trajectory"][-1]}')
+
+        # wandb.log({'datasize': results['datasize'][-1], f'rel_l2_{acquire_step}': results['rel_l2'][-1], f'rel_l2_trajectory_{acquire_step}': results['rel_l2_trajectory'][-1]})
+        wandb.log({'datasize': results['datasize'][-1], f'l2': results['l2'][-1], f'rel_l2': results['rel_l2'][-1], f'mse': results['mse'][-1], f'rel_l2_trajectory': results['rel_l2_trajectory'][-1]})
     return results
 
-@hydra.main(version_base=None, config_path="cfg_time", config_name="config.yaml")
+@hydra.main(version_base=None, config_path="cfg_whole_part", config_name="config.yaml")
 def main(cfg: OmegaConf):
     print("Input arguments:")
     print(OmegaConf.to_yaml(cfg))
@@ -230,17 +233,11 @@ def main(cfg: OmegaConf):
         wandb.init(mode="disabled")
 
     print('Loading training data...')
-    with h5py.File(f'data_large/{cfg.equation}_train_100000_default.h5', 'r') as f:
-        # Traj_dataset.traj_train = torch.tensor(f['train']['pde_140-256'][:10000, :131], dtype=torch.float32, device=cfg.device)
+    with h5py.File(cfg.dataset.train_path, 'r') as f:
         Traj_dataset.traj_train = torch.tensor(f['train']['pde_140-256'][:cfg.datasize, :131], dtype=torch.float32)
-        # Traj_dataset.traj_train = torch.tensor(f['train']['pde_140-256'][:100, :131], dtype=torch.float32, device=cfg.device)
-    # print('Loading validation data...')
-    # with h5py.File(f'data_large/{cfg.equation}_valid_1024_default.h5', 'r') as f:
-    #     Traj_dataset.traj_valid = torch.tensor(f['valid']['pde_140-256'][:, :131], dtype=torch.float32)
     print('Loading test data...')
-    with h5py.File(f'data_large/{cfg.equation}_test_100000_default.h5', 'r') as f:
-        # Traj_dataset.traj_test = torch.tensor(f['test']['pde_140-256'][:, :131], dtype=torch.float32)
-        Traj_dataset.traj_test = torch.tensor(f['test']['pde_140-256'][:10000, :131], dtype=torch.float32)
+    with h5py.File(cfg.dataset.test_path, 'r') as f:
+        Traj_dataset.traj_test = torch.tensor(f['test']['pde_140-256'][:cfg.testsize, :131], dtype=torch.float32)
 
     run_experiment(cfg)
 

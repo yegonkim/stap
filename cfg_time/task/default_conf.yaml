@@ -1,21 +1,22 @@
 # @package _global_
-equation: KdV
+equation: 
 nt: 14
 
-batch_acquire: 32
-initial_datasize: 32
-num_acquire: 1
-ensemble_size: 5
+datasize: 10000
+initial_time_steps: 3328 # 256 * 13
+num_acquire: 4 # 256 * 2^4 = 4096
+ensemble_size: 2
 selection_method: random
-selection_feature: direct
 seed: 1
 device: cuda
+acquisition_mode: time # time, whole
 
 train:
   unrolling: 0
-  epochs: 100
+  epochs: 500
   lr: 0.001
   batch_size: 32
+  # batch_size: 512
 
 wandb:
   use: True

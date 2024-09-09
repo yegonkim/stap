@@ -7,6 +7,7 @@ import torch
 import h5py
 import random
 import pickle
+import time
 
 from typing import Tuple
 from copy import copy
@@ -103,7 +104,8 @@ def generate_trajectories(pde: PDE,
                           num_samples: int,
                           suffix: str,
                           batch_size: int,
-                          device: torch.cuda.device="cpu"
+                          device: torch.cuda.device="cpu",
+                          args=None,
                           ) -> None:
     """
     Generate data trajectories for KdV, KS equation on periodic spatial domains.
@@ -146,8 +148,11 @@ def generate_trajectories(pde: PDE,
     # The field u, the coordinations (xcoord, tcoord) and dx, dt are saved
     # Only nt_effective time steps of each trajectories are saved
     h5f_u = dataset.create_dataset(f'pde_{pde.nt_effective}-{nx}', (num_samples, pde.nt_effective, nx), dtype=float)
-
+        
     for batch_idx in range(num_batches):
+        
+        time_start = time.time()
+
         n_data = min((batch_idx+1) * batch_size,num_samples) - batch_idx * batch_size
         if n_data == 0:
             continue
@@ -189,7 +194,9 @@ def generate_trajectories(pde: PDE,
                 break
             except AssertionError:
                 print(f'An error occured - possibly an underflow. re-running {trial}/5')
-        
+
+        time_end = time.time()
+
         sol = solved_trajectory.permute(1,0,2)[:,-pde.nt_effective:]
         # if pde_string == 'Burgers':
         #     sol = pde.to_burgers(sol)
@@ -199,6 +206,7 @@ def generate_trajectories(pde: PDE,
         
         print("Solved indices: {:d} : {:d}".format(batch_idx * batch_size, (batch_idx + 1) * batch_size - 1))
         print("Solved batches: {:d} of {:d}".format(batch_idx + 1, num_batches))
+        print("Time elapsed: {:.2f} seconds".format(time_end - time_start))
         sys.stdout.flush()
 
     print()
@@ -221,7 +229,8 @@ def generate_data(experiment: str,
                   num_samples_test: int,
                   batch_size: int=1,
                   device: torch.cuda.device="cpu",
-                  nu: float=0.01) -> None:
+                  nu: float=0.01,
+                  args=None) -> None:
     """
     Generate data for KdV, KS equation on periodic spatial domains.
     Args:
@@ -307,7 +316,8 @@ def generate_data(experiment: str,
                                 num_samples=num_samples,
                                 suffix=suffix,
                                 batch_size=batch_size,
-                                device=device,)
+                                device=device,
+                                args=args,)
 
 
 def main(args: argparse) -> None:
@@ -327,7 +337,8 @@ def main(args: argparse) -> None:
                   num_samples_test=args.test_samples,
                   batch_size=args.batch_size,
                   device=args.device,
-                  nu=args.nu)
+                  nu=args.nu,
+                  args=args,)
 
 
 if __name__ == "__main__":

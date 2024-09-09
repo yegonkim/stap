@@ -3,13 +3,18 @@ equation: KdV
 nt: 14
 
 batch_acquire: 32
-initial_datasize: 32
-num_acquire: 1
+initial_datasize: 128
+num_acquire: 12
 ensemble_size: 5
 selection_method: random
 selection_feature: direct
+num_random_pool: 1000
 seed: 1
+datasize: 10000
+testsize: 10000
+fix_initial_weights: False
 device: cuda
+
 
 train:
   unrolling: 0

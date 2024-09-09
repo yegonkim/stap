@@ -6,7 +6,7 @@ train:
   unrolling: 1
 wandb:
   project: Burgers
-  
+
 dataset:
   train_path: data_large/Burgers_train_100000_default.h5
   test_path: data_large/Burgers_test_100000_default.h5
