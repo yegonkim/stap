@@ -4,6 +4,7 @@ nt: 14
 
 datasize: 1000
 testsize: 10000
+# testsize: 1000
 # exponential_data: False
 initial_datasize: 128
 batch_acquire: 32
@@ -15,7 +16,7 @@ scenario: fixed # fixed, flexible
 initial_selection_method: random # random, variance, stochastic, lcmd
 post_selection_method: all # all, variance_prior, variance_direct
 optimization_method: greedy # greedy, individual
-flexible_selection_method: random # random, variance, stochastic, lcmd
+flexible_selection_method: random # variance, stochastic, lcmd
 
 comment: 
 

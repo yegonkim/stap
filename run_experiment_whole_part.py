@@ -3,15 +3,10 @@ import torch
 import numpy as np
 from neuralop.models import FNO
 from tqdm import tqdm
-import random
 
-import argparse
-import time
 
 from eval_utils import compute_metrics
-from custom_paths import get_results_path
-from utils import set_seed, flatten_configdict, trajectory_model, direct_model, split_model
-from acquisition.acquirers_batched import Acquirer_batched
+from utils import set_seed, flatten_configdict, trajectory_model
 
 from omegaconf import OmegaConf
 import hydra
@@ -94,8 +89,8 @@ def run_experiment(cfg):
         return model
 
     def test(model):
-        X_test = Traj_dataset.traj_test[:,0,:].unsqueeze(1).to(device)
-        Y_test = Traj_dataset.traj_test[:,-1,:].unsqueeze(1).to(device)
+        X_test = Traj_dataset.traj_test[:,0,:].unsqueeze(1)
+        Y_test = Traj_dataset.traj_test[:,-1,:].unsqueeze(1)
 
         testset = torch.utils.data.TensorDataset(X_test, Y_test)
         testloader = torch.utils.data.DataLoader(testset, batch_size=cfg.eval_batch_size, shuffle=False)
@@ -106,8 +101,8 @@ def run_experiment(cfg):
         with torch.no_grad():
             for x, y in testloader:
                 x, y = x.to(device), y.to(device)
-                Y_test_pred.append(model(x))
-            Y_test_pred = torch.cat(Y_test_pred, dim=0).to(device)
+                Y_test_pred.append(model(x).cpu())
+            Y_test_pred = torch.cat(Y_test_pred, dim=0)
         
         metrics = compute_metrics(Y_test, Y_test_pred, d=1)
 
@@ -115,8 +110,8 @@ def run_experiment(cfg):
     
 
     def test_trajectory(model):
-        X_test = Traj_dataset.traj_test[:,0:(nt-1)*timestep:timestep].to(device) # [datasize, nt-1, nx]
-        Y_test = Traj_dataset.traj_test[:,timestep:nt*timestep:timestep].to(device) # [datasize, nt-1, nx]
+        X_test = Traj_dataset.traj_test[:,0:(nt-1)*timestep:timestep] # [datasize, nt-1, nx]
+        Y_test = Traj_dataset.traj_test[:,timestep:nt*timestep:timestep] # [datasize, nt-1, nx]
         X_test = X_test.flatten(0, 1).unsqueeze(1) # [datasize*(nt-1), 1, nx]
         Y_test = Y_test.flatten(0, 1).unsqueeze(1) # [datasize*(nt-1), 1, nx]
         # X_test = Traj_dataset.traj_test[:,0].unsqueeze(1).to(device)
@@ -134,16 +129,16 @@ def run_experiment(cfg):
                 y_pred = model(x)
                 # print(y_pred.shape, y.shape)
                 assert y_pred.shape == y.shape
-                Y_test_pred.append(y_pred)
-            Y_test_pred = torch.cat(Y_test_pred, dim=0).to(device)
+                Y_test_pred.append(y_pred.cpu())
+            Y_test_pred = torch.cat(Y_test_pred, dim=0)
         
         metrics = compute_metrics(Y_test, Y_test_pred, d=2)
 
         return metrics
 
     def test_per_trajectory(model):
-        X_test = Traj_dataset.traj_test[:,0].unsqueeze(1).to(device)
-        Y_test = Traj_dataset.traj_test[:,timestep::timestep].to(device)
+        X_test = Traj_dataset.traj_test[:,0].unsqueeze(1)
+        Y_test = Traj_dataset.traj_test[:,timestep::timestep]
 
         testset = torch.utils.data.TensorDataset(X_test, Y_test)
         testloader = torch.utils.data.DataLoader(testset, batch_size=cfg.eval_batch_size, shuffle=False)
@@ -157,8 +152,8 @@ def run_experiment(cfg):
                 y_pred = model(x)
                 # print(y_pred.shape, y.shape)
                 assert y_pred.shape == y.shape
-                Y_test_pred.append(y_pred)
-            Y_test_pred = torch.cat(Y_test_pred, dim=0).to(device)
+                Y_test_pred.append(y_pred.cpu())
+            Y_test_pred = torch.cat(Y_test_pred, dim=0)
         
         metrics = compute_metrics(Y_test, Y_test_pred, d=2)
 
@@ -166,10 +161,11 @@ def run_experiment(cfg):
 
 
     timestep = (Traj_dataset.traj_train.shape[1] - 1) // (nt - 1) # 10
-    assert timestep == 10 # hardcoded for now (130/ (14-1) = 10)
+    # assert timestep == 10 # hardcoded for now (130/ (14-1) = 10)
+    print(timestep)
 
-    X = Traj_dataset.traj_train[:,0].unsqueeze(1).to(device)
-    Y = Traj_dataset.traj_train[:,0::timestep].to(device)
+    X = Traj_dataset.traj_train[:,0].unsqueeze(1)
+    Y = Traj_dataset.traj_train[:,0::timestep]
 
     train_nts = torch.ones(X.shape[0], device=device, dtype=torch.int64)
     # values are between 1 and 14, inclusive

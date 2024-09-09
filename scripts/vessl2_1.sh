@@ -1,5 +1,5 @@
 #!/bin/bash
-EQ='Burgers'
+EQ='KdV'
 
 for SEED in 0 1 2 3 4
 do
