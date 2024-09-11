@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 
 class LpLoss(object):
-    def __init__(self, d=2, p=2, size_average=True, reduction=True):
+    def __init__(self, d=2, p=2, size_average=True, reduction=True, device='cuda'):
         super(LpLoss, self).__init__()
 
         #Dimension and Lp-norm type are postive
@@ -12,14 +12,16 @@ class LpLoss(object):
         self.p = p
         self.reduction = reduction
         self.size_average = size_average
+        self.device = device
 
     def abs(self, x, y):
         num_examples = x.size()[0]
+        device_original = x.device
 
         #Assume uniform mesh
         h = 1.0 / (x.size()[1] - 1.0) if x.size()[1] > 1 else 1.0
-
-        all_norms = (h**(self.d/self.p))*torch.norm(x.reshape(num_examples,-1) - y.reshape(num_examples,-1), self.p, 1)
+        
+        all_norms = (h**(self.d/self.p))*torch.norm(x.reshape(num_examples,-1).to(self.device) - y.reshape(num_examples,-1).to(self.device), self.p, 1).to(device_original)
 
         if self.reduction:
             if self.size_average:
@@ -31,8 +33,9 @@ class LpLoss(object):
 
     def rel(self, x, y):
         num_examples = x.size()[0]
+        device_original = x.device
 
-        diff_norms = torch.norm(x.reshape(num_examples,-1) - y.reshape(num_examples,-1), self.p, 1)
+        diff_norms = torch.norm(x.reshape(num_examples,-1).to(self.device) - y.reshape(num_examples,-1).to(self.device), self.p, 1).to(device_original)
         y_norms = torch.norm(y.reshape(num_examples,-1), self.p, 1)
 
         if self.reduction:
@@ -42,6 +45,12 @@ class LpLoss(object):
                 return torch.sum(diff_norms/y_norms)
 
         return diff_norms/y_norms
+    
+    def mse(self, x, y):
+        device_original = x.device
+        mse = F.mse_loss(x.to(self.device), y.to(self.device), reduction='none').to(device_original)
+        mse = mse.mean(dim=tuple(range(1, mse.ndim)))
+        return mse
 
     def __call__(self, x, y):
         return self.rel(x, y)
@@ -49,9 +58,8 @@ class LpLoss(object):
 def compute_metrics(y, y_pred, d=1) :
     L2_func = LpLoss(d=d, p=2, reduction=False)
     if y.shape != y_pred.shape :
-        raise NotImplementedError
-    l2 = L2_func.abs(y, y_pred) # [bs]
-    relative_l2 = L2_func.rel(y, y_pred) # [bs]
-    mse = F.mse_loss(y_pred, y, reduction='none') # [bs]
-    mse = mse.mean(dim=tuple(range(1, mse.ndim)))
+        raise ValueError('y and y_pred must have the same shape')
+    l2 = L2_func.abs(y_pred, y) # [bs]
+    relative_l2 = L2_func.rel(y_pred, y) # [bs]
+    mse = L2_func.mse(y_pred, y) # [bs]
     return l2, relative_l2, mse

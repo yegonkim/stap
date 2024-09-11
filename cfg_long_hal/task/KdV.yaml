@@ -1,0 +1,18 @@
+# @package _global_
+defaults:
+  - default_conf
+equation: KdV
+train:
+  unrolling: 0
+wandb:
+  project: KdV
+
+dataset:
+  train_path: data_large/KdV_train_100000_default.h5
+  test_path: data_large/KdV_test_100000_default.h5
+
+generate_data:
+  L: 128.0
+  nt: 140
+  nx: 256
+  end_time: 56.0

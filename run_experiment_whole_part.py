@@ -85,7 +85,7 @@ def run_experiment(cfg):
                 optimizer.step()
                 total_loss += loss.item()
             scheduler.step()
-            wandb.log({f'train/loss_{acquire_step}': total_loss})
+            # wandb.log({f'train/loss_{acquire_step}': total_loss})
         return model
 
     def test(model):

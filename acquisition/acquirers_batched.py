@@ -86,7 +86,6 @@ class Acquirer_batched:
         else:
             raise ValueError(f"Optimization method {optimization_method} not implemented.")
         
-        print(select_nts)
         self.train_nts[batch_indices] = select_nts + 1
         return self.train_nts
 
@@ -118,12 +117,12 @@ class Acquirer_batched:
                 else:
                     raise ValueError(f"Selection method {selection_method} not implemented.")
             elif "mutual" in selection_method.split("_"):
-                stochastic_method = "log"
-                if "self" in selection_method.split("_"):
+                if "exp" not in selection_method.split("_"):
+                    stochastic_method = "log"
                     scores = self._compute_mutual_self(self.Y, starting_time) # [bs, nt]
-                elif "transductive" in selection_method.split("_"):
-                    raise NotImplementedError()
-                print(scores)
+                elif "exp" in selection_method.split("_"):
+                    stochastic_method = "plain"
+                    scores = torch.exp(self._compute_mutual_self(self.Y, starting_time)) # [bs, nt]
             else:
                 raise ValueError(f"Selection method {selection_method} not implemented.")
 
@@ -133,6 +132,8 @@ class Acquirer_batched:
             costs = torch.arange(nt)[None,:] - (train_nts-1)[:,None] # [bs, nt]
             utility = scores / costs # [bs, nt]
             utility[torch.arange(nt)[None,:] < (mask+1)[:,None]] = -np.inf
+            utility[utility == float('inf')] = -np.inf
+            utility[utility.isnan()] = -np.inf
             while total_cost < batch_size * (nt-1):
                 if "max" in selection_method.split("_"):
                     max_indices = torch.argmax(utility.flatten()) # an index in [0, bs*nt)
@@ -163,7 +164,6 @@ class Acquirer_batched:
                 utility[index, :] = -np.inf
             selected.pop(-1) # remove the last selection so that the total cost is less than batch_size * (nt-1)
             
-            print(selected)
 
             for index, time in selected:
                 assert train_nts[index] < time + 1
@@ -224,8 +224,7 @@ class Acquirer_batched:
         
         scores_temp = self._compute_variance(pred_X_starting_time, timesteps=nt-1-starting_time) # [bs, nt-1-starting_time]
         scores = torch.zeros(len(batch_indices), nt, device=self.device)
-        indices = torch.arange(scores.shape[1]).unsqueeze(0) >= (starting_time+1).unsqueeze(1) # [bs, nt]
-        scores[indices] = scores_temp
+        scores[:, starting_time+1:] = scores_temp
         return scores
 
     @torch.no_grad()
@@ -259,7 +258,7 @@ class Acquirer_batched:
             with torch.no_grad():
                 for i, model in enumerate(ensemble):
                     model.eval()
-                    pred.append(model(X_t[i]))
+                    pred.append(split_model(model, self.eval_batch_size)(X_t[i]))
             pred = torch.stack(pred, dim=0) # [n_models, bs_indices, 1, nx]
             pred_with_zeros = torch.zeros(len(ensemble), X.shape[0], 1, *X.shape[2:], device=self.device) # [n_models, bs, 1, nx]
             pred_with_zeros[:, indices] = pred
@@ -311,7 +310,7 @@ class Acquirer_batched:
             with torch.no_grad():
                 for i, model in enumerate(ensemble):
                     model.eval()
-                    pred.append(model(X_t[i]))
+                    pred.append(split_model(model, self.eval_batch_size)(X_t[i]))
             pred = torch.stack(pred, dim=0) # [n_models, bs_indices, 1, nx]
             assert pred.shape == (len(ensemble), indices.sum(), 1, X.shape[2])
             pred_with_zeros = torch.zeros(len(ensemble), X.shape[0], 1, *X.shape[2:], device=self.device) # [n_models, bs, 1, nx]
@@ -361,27 +360,25 @@ class Acquirer_batched:
         # Compute self-mutual information
         mutual_info = torch.zeros(bs, nt, device=self.device)
         
+        high_entropy = self._compute_entropy(features) # [bs]
         for t in range(nt):
-            entropy_t = self._compute_entropy(features[:, :, t-starting_time])
+            features_t = features[:, :, :t+1, :] # [n_models, bs, T, nx]
             
-            # Compute joint entropy of current timestep with itself
-            joint_entropy = self._compute_joint_entropy(features[:, :, t-starting_time], features[:, :, t-starting_time])
+            low_entropy = self._compute_entropy(features_t) # [bs]
+            joint_entropy = self._compute_entropy(torch.cat([features_t, features], dim=2)) # [bs]
             
-            mutual_info[:, t] = entropy_t
+            # mutual information = H(X) + H(Y) - H(X,Y)
+            mutual_info[:, t] = high_entropy + low_entropy - joint_entropy # [bs]
         
         return mutual_info
     
     def _compute_entropy(self, features):
-        
+        # features: [n_models, bs, nt, nx]
+        std = self.cfg.get('std', 1e-2)
+        features = features.flatten(2) # [n_models, bs, nt*nx]
+        dim = features.shape[-1]
+        covariance_like = torch.einsum('nbd,mbd->bnm', features, features) # [bs, n_models, n_models]
+        log_det_cov = torch.logdet(covariance_like/(std**2) + torch.eye(covariance_like.shape[1], device=features.device).unsqueeze(0))
+        log_det_cov += dim * np.log(std**2)
+        entropy = 0.5 * log_det_cov + dim/2 * (1 + np.log(2*np.pi))
         return entropy
-
-
-def entropy(X, ensemble, **cfg):
-    std = cfg.get('std', 1e-2)
-    bs, bs_acquire = X.shape[:2]
-    features = get_features_ycov(X.reshape(bs*bs_acquire, *X.shape[2:]), ensemble) # [bs*bs_acquire, N, dim]
-    features = features.view(bs, bs_acquire, *features.shape[1:]) # [bs, bs_acquire, N, dim]
-    covariance_like = torch.einsum('bcnd,bcmd->bnm', features, features) # [bs, N, N]
-    log_det_cov = torch.logdet(covariance_like + std**2*torch.eye(covariance_like.shape[1], device=features.device).unsqueeze(0)) # [bs]
-    score = log_det_cov / 2 + (features.shape[1] + features.shape[3]) / 2 * torch.log(torch.tensor(2 * 3.14159265358979323846, device=features.device)) # [bs]
-    return score

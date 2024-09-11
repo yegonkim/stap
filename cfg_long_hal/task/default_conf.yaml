@@ -31,6 +31,15 @@ train:
   lr: 0.001
   batch_size: 32
 
+
+generate_data:
+  L: 
+  nt: 
+  nx: 
+  end_time: 
+  solver: dopri5
+  nu: 0.01
+
 wandb:
   use: True
   project: 

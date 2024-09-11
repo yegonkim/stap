@@ -3,15 +3,10 @@ import torch
 import numpy as np
 from neuralop.models import FNO
 from tqdm import tqdm
-import random
 
-import argparse
-import time
 
 from eval_utils import compute_metrics
-from custom_paths import get_results_path
-from utils import set_seed, flatten_configdict, trajectory_model, direct_model, split_model
-from acquisition.acquirers_batched import Acquirer_batched
+from utils import set_seed, flatten_configdict, trajectory_model
 
 from omegaconf import OmegaConf
 import hydra
@@ -39,8 +34,10 @@ def run_experiment(cfg):
     lr = cfg.train.lr
     batch_size = cfg.train.batch_size
     initial_datasize = cfg.initial_datasize
+    whole_initial_datasize = cfg.whole_initial_datasize
+    p = cfg.p
 
-    def train(Y, train_nts, **kwargs):
+    def train(Y, train_indices, **kwargs):
         assert unrolling == 0
 
         acquire_step = kwargs.get('acquire_step', 0)
@@ -50,19 +47,26 @@ def run_experiment(cfg):
 
         model = model.to(device)
 
+        if train_indices.sum().item() == 0:
+            return model
+
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs)
         criterion = torch.nn.MSELoss()
 
-        inputs = []
-        outputs = []
-        for b in range(Y.shape[0]):
-            for t in range(train_nts[b].item()-1):
-                inputs.append(Y[b,t])
-                outputs.append(Y[b, t+1])
-        inputs = torch.stack(inputs, dim=0).unsqueeze(1)
-        outputs = torch.stack(outputs, dim=0).unsqueeze(1)
+        # inputs = []
+        # outputs = []
+        # for b in range(Y.shape[0]):
+        #     for t in range(train_nts[b].item()-1):
+        #         inputs.append(Y[b,t])
+        #         outputs.append(Y[b, t+1])
+        # inputs = torch.stack(inputs, dim=0).unsqueeze(1)
+        # outputs = torch.stack(outputs, dim=0).unsqueeze(1)
 
+        inputs = Y[:,:-1][train_indices][:,None,:]
+        outputs = Y[:,1:][train_indices][:,None,:]
+        assert inputs.shape[0] == train_indices.sum().item()
+        
         dataset = torch.utils.data.TensorDataset(inputs, outputs)
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
@@ -88,7 +92,6 @@ def run_experiment(cfg):
             # wandb.log({f'train/loss_{acquire_step}': total_loss})
         return model
 
-    
     def test_trajectory(model):
         X_test = Traj_dataset.traj_test[:,0:(nt-1)*timestep:timestep] # [datasize, nt-1, nx]
         Y_test = Traj_dataset.traj_test[:,timestep:nt*timestep:timestep] # [datasize, nt-1, nx]
@@ -142,29 +145,22 @@ def run_experiment(cfg):
 
     timestep = (Traj_dataset.traj_train.shape[1] - 1) // (nt - 1) # 10
     # assert timestep == 10 # hardcoded for now (130/ (14-1) = 10)
+    print(f'Timestep: {timestep}')
 
     X = Traj_dataset.traj_train[:,0].unsqueeze(1)
     Y = Traj_dataset.traj_train[:,0::timestep]
 
-    train_nts = torch.ones(X.shape[0], device=device, dtype=torch.int64)
+    train_indices = torch.zeros(X.shape[0], nt-1, dtype=torch.bool)
+    train_indices[:whole_initial_datasize, :] = True
+    train_indices[whole_initial_datasize:whole_initial_datasize+initial_datasize, :] = torch.bernoulli(torch.ones(initial_datasize, nt-1) * p).bool()
     # values are between 1 and 14, inclusive
     # 1 means only initial data, 14 means all data
 
-    train_nts[:initial_datasize] = nt
+    ensemble = [train(Y, train_indices, acquire_step=0) for _ in tqdm(range(ensemble_size))]
 
-    ensemble = [train(Y, train_nts, acquire_step=0) for _ in tqdm(range(ensemble_size))]
-
-    acquirer = Acquirer_batched(ensemble, Y, train_nts, device=device, eval_batch_size=cfg.eval_batch_size,
-                                scenario=cfg.scenario, initial_selection_method=cfg.initial_selection_method,
-                                post_selection_method=cfg.post_selection_method, batch_acquire=cfg.batch_acquire,
-                                flexible_selection_method=cfg.flexible_selection_method,
-                                optimization_method=cfg.optimization_method,
-                                num_random_pool=cfg.num_random_pool, std=cfg.std)
-    train_nts = acquirer.train_nts
-    
     results = {'datasize': [], 'l2': [], 'mse': [], 'rel_l2': [], 'l2_trajectory': [], 'mse_trajectory': [], 'rel_l2_trajectory': []}
 
-    results['datasize'].append((train_nts-1).sum().item())
+    results['datasize'].append(train_indices.sum().item())
     # rel_l2_list = [test(direct_model(model, nt-1))[1].mean().item() for model in ensemble]
     metrics_list = torch.stack([torch.stack(test_per_trajectory(trajectory_model(model, nt-1))) for model in ensemble]) # [ensemble_size, 3, datasize]
     results['l2_trajectory'].append(metrics_list[:, 0, :].mean().item())
@@ -178,12 +174,10 @@ def run_experiment(cfg):
     wandb.log({'datasize': results['datasize'][-1], f'l2': results['l2'][-1], f'rel_l2': results['rel_l2'][-1], f'mse': results['mse'][-1], f'l2_trajectory': results['l2_trajectory'][-1], f'rel_l2_trajectory': results['rel_l2_trajectory'][-1], f'mse_trajectory': results['mse_trajectory'][-1]})
     
     for acquire_step in range(1, num_acquire+1):
-        acquirer.select()
-        ensemble = [train(Y, acquirer.train_nts, acquire_step=acquire_step) for _ in tqdm(range(ensemble_size))]
-        acquirer.ensemble = ensemble
-        train_nts = acquirer.train_nts
+        train_indices[whole_initial_datasize:whole_initial_datasize+initial_datasize*(2**acquire_step)] = torch.bernoulli(torch.ones(initial_datasize*(2**acquire_step), nt-1) * p).bool()
+        ensemble = [train(Y, train_indices, acquire_step=acquire_step) for _ in tqdm(range(ensemble_size))]
 
-        results['datasize'].append((train_nts-1).sum().item())
+        results['datasize'].append(train_indices.sum().item())
         # rel_l2_list = [test(direct_model(model, nt-1))[1].mean().item() for model in ensemble]
         metrics_list = torch.stack([torch.stack(test_per_trajectory(trajectory_model(model, nt-1))) for model in ensemble]) # [ensemble_size, 3, datasize]
         results['l2_trajectory'].append(metrics_list[:, 0, :].mean().item())
@@ -194,11 +188,10 @@ def run_experiment(cfg):
         results['rel_l2'].append(metrics_list[:, 1, :].mean().item())
         results['mse'].append(metrics_list[:, 2, :].mean().item())
         print(f'Datasize: {results["datasize"][-1]}, L2: {results["l2"][-1]}, Rel_l2: {results["rel_l2"][-1]}, MSE: {results["mse"][-1]}, L2_trajectory: {results["l2_trajectory"][-1]}, Rel_l2_trajectory: {results["rel_l2_trajectory"][-1]}, MSE_trajectory: {results["mse_trajectory"][-1]}')
-        wandb.log({'datasize': results['datasize'][-1], f'l2': results['l2'][-1], f'rel_l2': results['rel_l2'][-1], f'mse': results['mse'][-1],f'l2_trajectory': results['l2_trajectory'][-1], f'rel_l2_trajectory': results['rel_l2_trajectory'][-1], f'mse_trajectory': results['mse_trajectory'][-1]})
-    
+        wandb.log({'datasize': results['datasize'][-1], f'l2': results['l2'][-1], f'rel_l2': results['rel_l2'][-1], f'mse': results['mse'][-1], f'l2_trajectory': results['l2_trajectory'][-1], f'rel_l2_trajectory': results['rel_l2_trajectory'][-1], f'mse_trajectory': results['mse_trajectory'][-1]})
     return results
 
-@hydra.main(version_base=None, config_path="cfg_time_batch", config_name="config.yaml")
+@hydra.main(version_base=None, config_path="cfg_selective", config_name="config.yaml")
 def main(cfg: OmegaConf):
     print("Input arguments:")
     print(OmegaConf.to_yaml(cfg))

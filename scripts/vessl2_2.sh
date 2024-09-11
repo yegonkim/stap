@@ -1,17 +1,14 @@
 #!/bin/bash
-EQ='Burgers'
 
-for SEED in 0 1 2 3 4
+for SEED in 10 11 12 13 14
 do
-    python run_experiment_whole_part.py task=$EQ seed=$SEED nt=131 wandb.project=${EQ}_whole_part_9_10 datasize=1000 whole_initial_datasize=0 num_acquire=2 timesteps=131 initial_datasize=1 batch_acquire=1 
-    python run_experiment_whole_part.py task=$EQ seed=$SEED nt=131 wandb.project=${EQ}_whole_part_9_10 datasize=1000 whole_initial_datasize=0 num_acquire=2 timesteps=66 initial_datasize=2 batch_acquire=2
-    python run_experiment_whole_part.py task=$EQ seed=$SEED nt=131 wandb.project=${EQ}_whole_part_9_10 datasize=1000 whole_initial_datasize=0 num_acquire=2 timesteps=2 initial_datasize=130 batch_acquire=130
-
-    python run_experiment_whole_part.py task=$EQ seed=$SEED nt=131 wandb.project=${EQ}_whole_part_9_10 datasize=1000 whole_initial_datasize=60 num_acquire=2 timesteps=131 initial_datasize=0 batch_acquire=1 
-    python run_experiment_whole_part.py task=$EQ seed=$SEED nt=131 wandb.project=${EQ}_whole_part_9_10 datasize=1000 whole_initial_datasize=60 num_acquire=2 timesteps=66 initial_datasize=0 batch_acquire=2
-    python run_experiment_whole_part.py task=$EQ seed=$SEED nt=131 wandb.project=${EQ}_whole_part_9_10 datasize=1000 whole_initial_datasize=60 num_acquire=2 timesteps=2 initial_datasize=0 batch_acquire=130
-
-    python run_experiment_whole_part.py task=$EQ seed=$SEED nt=131 wandb.project=${EQ}_whole_part_9_10 datasize=1000 whole_initial_datasize=120 num_acquire=2 timesteps=131 initial_datasize=0 batch_acquire=1
-    python run_experiment_whole_part.py task=$EQ seed=$SEED nt=131 wandb.project=${EQ}_whole_part_9_10 datasize=1000 whole_initial_datasize=120 num_acquire=2 timesteps=66 initial_datasize=0 batch_acquire=2
-    python run_experiment_whole_part.py task=$EQ seed=$SEED nt=131 wandb.project=${EQ}_whole_part_9_10 datasize=1000 whole_initial_datasize=120 num_acquire=2 timesteps=2 initial_datasize=0 batch_acquire=130
+    for EQ in KdV
+    do
+        # python run_experiment_long_front.py task=$EQ seed=$SEED wandb.project=${EQ}_long_9_12 nt=131 initial_datasize=16 p=1.0 whole_initial_datasize=64 dataset.train_path=data/KdV_train_10000_default.h5 dataset.test_path=data/KdV_test_10000_default.h5 wandb.use=False
+        python run_experiment_long_front.py task=$EQ seed=$SEED wandb.project=${EQ}_long_9_12 nt=131 initial_datasize=32 p=0.5 whole_initial_datasize=64 dataset.train_path=data/KdV_train_10000_default.h5 dataset.test_path=data/KdV_test_10000_default.h5 wandb.use=False
+        # python run_experiment_long_front.py task=$EQ seed=$SEED wandb.project=${EQ}_long_9_12 nt=131 initial_datasize=64 p=0.25 whole_initial_datasize=64 dataset.train_path=data/KdV_train_10000_default.h5 dataset.test_path=data/KdV_test_10000_default.h5 wandb.use=False
+        # python run_experiment_long_front.py task=$EQ seed=$SEED wandb.project=${EQ}_long_9_12 nt=131 initial_datasize=128 p=0.125 whole_initial_datasize=64 dataset.train_path=data/KdV_train_10000_default.h5 dataset.test_path=data/KdV_test_10000_default.h5 wandb.use=False
+        # python run_experiment_long_front.py task=$EQ seed=$SEED wandb.project=${EQ}_long_9_12 nt=131 initial_datasize=256 p=0.0625 whole_initial_datasize=64 dataset.train_path=data/KdV_train_10000_default.h5 dataset.test_path=data/KdV_test_10000_default.h5 wandb.use=False
+        # python run_experiment_long_front.py task=$EQ seed=$SEED wandb.project=${EQ}_long_9_12 nt=131 initial_datasize=512 p=0.03125 whole_initial_datasize=64 dataset.train_path=data/KdV_train_10000_default.h5 dataset.test_path=data/KdV_test_10000_default.h5 wandb.use=False
+    done
 done

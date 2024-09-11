@@ -1,0 +1,18 @@
+# @package _global_
+defaults:
+  - default_conf
+equation: KS
+train:
+  unrolling: 0
+wandb:
+  project: KS
+
+dataset:
+  train_path: data_small/KS_train_1024_default.h5
+  test_path: data_small/KS_test_4096_default.h5
+
+generate_data:
+  L: 64.0
+  nt: 140
+  nx: 256
+  end_time: 28.0
