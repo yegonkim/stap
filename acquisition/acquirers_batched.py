@@ -169,6 +169,9 @@ class Acquirer_batched:
                 assert train_nts[index] < time + 1
                 train_nts[index] = time + 1
             self.train_nts = train_nts
+
+            print(f"Selected {len(selected)} samples with total cost {total_cost}")
+            print(selected)
         elif "batch" in selection_method.split("_"):
             raise NotImplementedError()
         elif "lcmd" in selection_method.split("_"):

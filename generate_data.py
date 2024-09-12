@@ -99,6 +99,7 @@ def inv_cole_hopf(psi0: np.ndarray, scale: float = 10.) -> np.ndarray:
     psi0 = np.exp(psi0)
     return psi0
 
+@torch.no_grad()
 def generate_trajectories(pde: PDE,
                           mode: str,
                           num_samples: int,
@@ -199,8 +200,7 @@ def generate_trajectories(pde: PDE,
 
         sol = solved_trajectory.permute(1,0,2)[:,-pde.nt_effective:]
         if pde_string == 'Burgers':
-            # sol = pde.to_burgers(sol)
-            sol = torch.stack([pde.to_burgers(sol[i]) for i in range(sol.shape[0])])
+            sol = pde.to_burgers(sol.reshape(-1,nx)).reshape(*sol.shape)
             
         sol = sol.cpu()
         h5f_u[batch_idx * batch_size:batch_idx * batch_size+n_data, :, :] = sol
@@ -430,92 +430,83 @@ def _get_pde_object(cfg):
 
     return pde
 
-# def generate_timestep(u0, cfg):
-#     num_samples = u0.shape[0]
-#     batch_size = cfg.batch_size
-#     pde = _get_pde_object(cfg)
+@torch.no_grad()
+def generate_timestep(u0, t0, cfg):
+    device = cfg.device
+    batch_size = cfg.generate_data.batch_size
 
-#     num_batches = int(np.ceil(num_samples / batch_size))
+    pde = _get_pde_object(cfg)
 
-#     pde_string = str(pde)
-#     # Tolerance of the solver
-#     tol = 1e-9
+    pde_string = str(pde)
+    # Tolerance of the solver
+    tol = 1e-9
     
-#     nt = pde.grid_size[0]
-#     nx = pde.grid_size[1]
+    nt = cfg.generate_data.nt
+    end_time = cfg.generate_data.end_time
+    dt = end_time / (nt-1)
+    nx = pde.grid_size[1]
     
-#     # The field u, the coordinations (xcoord, tcoord) and dx, dt are saved
-#     # Only nt_effective time steps of each trajectories are saved
-#     # h5f_u = dataset.create_dataset(f'pde_{pde.nt_effective}-{nx}', (num_samples, pde.nt_effective, nx), dtype=float)
+    # The field u, the coordinations (xcoord, tcoord) and dx, dt are saved
+    # Only nt_effective time steps of each trajectories are saved
+    # h5f_u = dataset.create_dataset(f'pde_{pde.nt_effective}-{nx}', (num_samples, pde.nt_effective, nx), dtype=float)
+
+    # if pde_string == 'Burgers':
+    #     u0 = u0.cpu().numpy()
+    #     u0 = inv_cole_hopf(u0)
+    #     u0 = torch.tensor(u0)
+
+    u0 = u0.to(device)
+    n_data = u0.shape[0]
+    solution = []
+    for batch_idx, u in enumerate(u0.split(batch_size)):
+        try:
+            T = pde.tmax
+            L = pde.L
+
+            t = np.linspace(t0, t0+dt, 2)
+            x = np.linspace(0, (1 - 1.0 / nx) * L, nx)
         
-#     for batch_idx in range(num_batches):
-#         device = cfg.device
-#         time_start = time.time()
+            spectral_method = pde.pseudospectral_reconstruction_batch
+            t = torch.tensor(t).to(device)
 
-#         n_data = min((batch_idx+1) * batch_size,num_samples) - batch_idx * batch_size
-#         if n_data == 0:
-#             continue
-#         u0_list = []
-#         for trial in range(5):
-#             try:
-#                 for j in range(n_data):
-                    
-#                     T = pde.tmax
-#                     L = pde.L
+            solved_trajectory = odeint(func=spectral_method,
+                                        t=t,
+                                        y0=u,
+                                        method=cfg.generate_data.solver,
+                                        atol=tol,
+                                        rtol=tol)
+            sol = solved_trajectory.permute(1,0,2)
 
-#                     t = np.linspace(pde.tmin, T, nt)
-#                     x = np.linspace(0, (1 - 1.0 / nx) * L, nx)
+            # if pde_string == 'Burgers':
+            #     sol = pde.to_burgers(sol.reshape(-1,nx)).reshape(*sol.shape)
+            sol = sol.cpu() # (n_data, 2, nx)
+            sol = sol[:,1,:] # (n_data, 1, nx)
+        except AssertionError:
+            raise Exception('An error occured - possibly an underflow.')
+        solution.append(sol)
+    solution = torch.cat(solution, dim=0) # (n_data, 1, nx)
 
-#                     # Parameters for initial conditions
-#                     A, omega, l = params(pde, batch_size, device=device)
-
-#                     # Initial condition of the equation at end
-#                     u0 = initial_conditions(A, omega, l, L)(x[:, None])
-
-#                     # We use the initial condition of Burgers' equation and inverse Cole-Hopf transform it into the Heat equation
-#                     if pde_string == 'Burgers':
-#                         u0 = inv_cole_hopf(u0)
-
-#                     u0_list.append(u0)
-                    
-            
-#                 spectral_method = pde.pseudospectral_reconstruction_batch
-                        
-#                 u0 = torch.tensor(np.stack(u0_list,axis=0)).to(device)
-#                 t = torch.tensor(t).to(device)
-
-#                 solved_trajectory = odeint(func=spectral_method,
-#                                             t=t,
-#                                             y0=u0,
-#                                             method=args.solver,
-#                                             atol=tol,
-#                                             rtol=tol)
-#                 break
-#             except AssertionError:
-#                 print(f'An error occured - possibly an underflow. re-running {trial}/5')
-
-#         time_end = time.time()
-
-#         sol = solved_trajectory.permute(1,0,2)[:,-pde.nt_effective:]
-#         if pde_string == 'Burgers':
-#             sol = pde.to_burgers(sol)
-            
-#         sol = sol.cpu()
-#         h5f_u[batch_idx * batch_size:batch_idx * batch_size+n_data, :, :] = sol
+    return solution
+    
     
 # def generate_initial_conditions(num_initial_conditions, cfg):
 #     pde = _get_pde_object(cfg)
-#     u0_list = []
 #     T = pde.tmax
 #     L = pde.L
 #     batch_size = cfg.generate_data.batch_size
 #     device = cfg.device
+#     nx = pde.grid_size[1]
 
-#     # Parameters for initial conditions
-#     A, omega, l = params(pde, batch_size, device=device)
+#     u0_list = []
+#     for j in range(num_initial_conditions):
+#         x = np.linspace(0, (1 - 1.0 / nx) * L, nx)
+#         # Parameters for initial conditions
+#         A, omega, l = params(pde, batch_size, device=device)
 
-#     # Initial condition of the equation at end
-#     u0 = initial_conditions(A, omega, l, L)(x[:, None])
+#         # Initial condition of the equation at end
+#         u0 = initial_conditions(A, omega, l, L)(x[:, None])
 
-#     u0_list.append(u0)
+#         u0_list.append(u0)
+#     u0 = torch.tensor(np.stack(u0_list,axis=0)).to(device)
 
+#     return u0

@@ -101,6 +101,7 @@ class KdV(PDE):
         self.device = device
         self.psdiff.device = device
 
+    # @torch.compile
     def pseudospectral_reconstruction_batch(self, t: float, u: torch.tensor) -> torch.tensor:
         # batchwise gpu computation
         # u has shape (batch_size,nx)
@@ -240,7 +241,8 @@ class Burgers(PDE):
         psix = self.psdiff(psi,order = 1,device = device)
         return  - (psix / psi) * (2 * self.nu)
 
-    def pseudospectral_reconstruction_batch(self, t: float, u: torch.tensor) -> torch.tensor:
+    # @torch.compile
+    def pseudospectral_reconstruction_batch(self, t: float, u: torch.Tensor) -> torch.Tensor:
         # batchwise gpu computation
         # u has shape (batch_size,nx)
 

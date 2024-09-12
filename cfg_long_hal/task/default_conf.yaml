@@ -35,10 +35,12 @@ train:
 generate_data:
   L: 
   nt: 
-  nx: 
+  nx: 256
   end_time: 
+  nt_effective: 140
   solver: dopri5
-  nu: 0.01
+  batch_size: 10000
+  nu: 
 
 wandb:
   use: True

@@ -13,6 +13,5 @@ dataset:
 
 generate_data:
   L: 128.0
-  nt: 140
-  nx: 256
-  end_time: 56.0
+  nt: 250
+  end_time: 100.0

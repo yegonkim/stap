@@ -8,12 +8,11 @@ wandb:
   project: Burgers
 
 dataset:
-  train_path: data_large/Burgers_train_100000_default.h5
-  test_path: data_large/Burgers_test_100000_default.h5
+  train_path: data/Burgers_train_10000_default.h5
+  test_path: data/Burgers_test_10000_default.h5
 
 generate_data:
   L: 128.0
-  nt: 140
-  nx: 256
-  end_time: 14.0
-
+  nt: 180
+  end_time: 18.0
+  nu: 0.01
