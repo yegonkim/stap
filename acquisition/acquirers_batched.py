@@ -1,6 +1,6 @@
 import torch
 from tqdm import tqdm
-from .feature_functions import get_features_ycov, get_features_hidden
+from .feature_functions import get_features_ycov, get_features_hidden, get_features_hidden_trajectory, get_features_ycov_trajectory
 from utils import direct_model, trajectory_model, split_model, torch_delete, torch_expand
 import numpy as np
 
@@ -15,32 +15,91 @@ class Acquirer_batched:
         self.eval_batch_size = cfg.get('eval_batch_size', 256)
         self.cost = 0
 
+    def _eval_mode(self):
+        for model in self.ensemble:
+            model.eval()
+
     @torch.no_grad()
-    def select_initial_batch(self, initial_selection_method, batch_size):
+    def select_initial_batch(self, selection_method, batch_size):
+        self._eval_mode()
         bs = self.Y.shape[0]
-        if initial_selection_method == "random":
+
+        if selection_method == "random":
             weights = (self.train_nts == 1).float()
             batch_indices = torch.multinomial(weights, num_samples=batch_size, replacement=False)
-        elif initial_selection_method == "variance":
+        elif selection_method == "variance":
             # indices = torch.tensor([b for b in range(bs) if self.train_nts[b].item() == 1], device=self.device)
             indices = torch.arange(bs)[self.train_nts == 1]
             scores = self._compute_scores(starting_time=0, batch_indices=indices).sum(dim=-1).cpu()
             _, top_indices = torch.topk(scores, k=batch_size)
             batch_indices = indices[top_indices]
-        elif initial_selection_method == "stochastic":
+        elif selection_method == "stochastic":
             # indices = torch.tensor([b for b in range(bs) if self.train_nts[b].item() == 1], device=self.device)
             indices = torch.arange(bs)[self.train_nts == 1]
             scores = self._compute_scores(starting_time=0, batch_indices=indices).sum(dim=-1).cpu()
             probabilities = scores / scores.sum()
             top_indices = torch.multinomial(probabilities, num_samples=batch_size, replacement=False)
             batch_indices = indices[top_indices]
+        elif "lcmd" in selection_method.split("_"):
+            indices = torch.arange(bs)[self.train_nts == 1]
+            if "hidden" in selection_method.split("_"):
+                features = get_features_hidden_trajectory(self.Y[indices, 0:1], self.ensemble, self.nt-1)
+            elif "ycov" in selection_method.split("_"):
+                features = get_features_ycov_trajectory(self.Y[indices, 0:1], self.ensemble, self.nt-1)
+            else:
+                raise ValueError(f"Feature method in {selection_method} not implemented.")
+            
+            features = features.flatten(start_dim=1)  # [num_candidates, feature_dim]
+            
+            # Calculate pairwise distances once
+            pairwise_distances = torch.cdist(features, features)
+            
+            # Initialize selected indices and remaining indices
+            selected_indices = []
+            remaining_indices = list(range(len(indices)))
+            
+            while len(selected_indices) < batch_size:
+                if len(selected_indices) == 0:
+                    # Select the point with the largest norm for the first selection
+                    norms = torch.norm(features, dim=1)
+                    idx = torch.argmax(norms).item()
+                    selected_indices.append(idx)
+                    remaining_indices.remove(idx)
+                else:
+                    # Use pre-computed distances
+                    distances_to_selected = pairwise_distances[remaining_indices][:, selected_indices]
+                    
+                    # Find the closest selected point for each remaining point
+                    min_distances, closest_selected = torch.min(distances_to_selected, dim=1)
+                    
+                    # Group remaining points by their closest selected point
+                    clusters = [[] for _ in range(len(selected_indices))]
+                    for i, cluster_idx in enumerate(closest_selected):
+                        clusters[cluster_idx.item()].append(remaining_indices[i])
+                    
+                    # Find the largest cluster
+                    largest_cluster_idx = max(range(len(clusters)), key=lambda i: len(clusters[i]))
+                    largest_cluster = clusters[largest_cluster_idx]
+                    
+                    # Select the point in the largest cluster that's furthest from its center
+                    cluster_features = features[largest_cluster]
+                    cluster_center = torch.mean(cluster_features, dim=0, keepdim=True)
+                    cluster_distances = torch.cdist(cluster_features, cluster_center).squeeze()
+                    furthest_idx = torch.argmax(cluster_distances).item()
+                    selected_idx = largest_cluster[furthest_idx]
+                    
+                    selected_indices.append(selected_idx)
+                    remaining_indices.remove(selected_idx)
+            
+            batch_indices = indices[selected_indices]
         else:
-            raise ValueError(f"Initial selection method {initial_selection_method} not implemented.")
+            raise ValueError(f"Initial selection method {selection_method} not implemented.")
         
         return batch_indices
 
     @torch.no_grad()
     def post_selection(self, selection_method, batch_indices):
+        self._eval_mode()
         if len(batch_indices) == 0:
             return self.train_nts
         
@@ -91,6 +150,7 @@ class Acquirer_batched:
 
     @torch.no_grad()
     def select_flexible_batch(self, selection_method, batch_size, num_random_pool=1000):
+        self._eval_mode()
         bs = self.Y.shape[0]
         nt = self.nt
         train_nts= self.train_nts
@@ -123,6 +183,9 @@ class Acquirer_batched:
                 elif "exp" in selection_method.split("_"):
                     stochastic_method = "plain"
                     scores = torch.exp(self._compute_mutual_self(self.Y, starting_time)) # [bs, nt]
+            elif "dumb" in selection_method.split("_"):
+                stochastic_method = "plain"
+                scores = torch.ones(bs, nt, device=self.device)
             else:
                 raise ValueError(f"Selection method {selection_method} not implemented.")
 
@@ -275,7 +338,7 @@ class Acquirer_batched:
         return features[:, :, 1:, :] # [n_models, bs, max_timesteps, nx]
 
     @torch.no_grad()
-    def _compute_variance_prior(self, Y, starting_time):
+    def _compute_variance_prior(self, Y: torch.Tensor, starting_time: torch.Tensor):
         # starting_time is a tensor of shape [bs]
         nt = self.nt
         bs = Y.shape[0]
@@ -291,7 +354,7 @@ class Acquirer_batched:
         return scores
     
     @torch.no_grad()
-    def _compute_variance_direct(self, Y, starting_time):
+    def _compute_variance_direct(self, Y: torch.Tensor, starting_time: torch.Tensor):
         nt = self.nt
         bs = Y.shape[0]
         timesteps = (nt - 1) - starting_time

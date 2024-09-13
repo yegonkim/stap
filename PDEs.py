@@ -178,7 +178,82 @@ class KS(PDE):
         dudt = - u*ux - uxx - uxxxx
         return dudt
 
-class Burgers(PDE):
+# class Burgers(PDE):
+#     """
+#     The heat equation ut - nu * uxx = 0
+#     which we use to get data for the Burgers' equation via the Cole-Hopf transformation
+#     """
+#     def __init__(self,
+#                  nu: float=None,
+#                  tmin: float=None,
+#                  tmax: float=None,
+#                  grid_size: list=None,
+#                  nt_effective: int=None,
+#                  L: float=None,
+#                  lmin: float=None,
+#                  lmax: float=None,
+#                  device: torch.cuda.device = "cpu"):
+#         super().__init__()
+#         # Diffusion coefficient
+#         self.nu = 0.01 if nu is None else nu
+#         # Start and end time of the trajectory
+#         self.tmin = 0 if tmin is None else tmin
+#         self.tmax = 16. if tmax is None else tmax
+#         # Sin frequencies for initial conditions
+#         self.lmin = 1 if lmin is None else lmin
+#         self.lmax = 7 if lmax is None else lmax
+#         # Number of different waves
+#         self.N = 20
+#         # Length of the spatial domain
+#         self.L = 2 * math.pi if L is None else L
+#         self.grid_size = (100, 2 ** 8) if grid_size is None else grid_size
+#         # The effective time steps used for learning and inference
+#         self.nt_effective = 100 if nt_effective is None else nt_effective
+#         self.nt = self.grid_size[0]
+#         self.nx = self.grid_size[1]
+#         # dt and dx are slightly different due to periodicity in the spatial domain
+#         self.dt = self.tmax / (self.grid_size[0]-1)
+#         self.dx = self.L / (self.grid_size[1])
+#         self.device = device
+#         # if self.device != "cpu":
+#         #     # raise NotImplementedError
+#         self.psdiff = ComputePSDiff(self.nx,self.L,self.device)
+
+#         # Parameters for Lie Point symmetry data augmentation
+#         self.time_shift = 0
+#         self.max_x_shift = 0.0
+#         self.alpha = 0.0
+
+
+#         assert (self.grid_size[0] >= self.nt_effective)
+
+#     def __repr__(self):
+#         return f'Burgers'
+    
+#     def set_device(self,device):
+#         self.device = device
+#         self.psdiff.device = device
+        
+#     def to_burgers(self,psi: torch.Tensor, device = None):
+#         # cole-hopf transformation 
+#         # psi has shape (nt,nx)
+        
+#         psix = self.psdiff(psi,order = 1,device = device)
+#         return  - (psix / psi) * (2 * self.nu)
+
+#     # @torch.compile
+#     def pseudospectral_reconstruction_batch(self, t: float, u: torch.Tensor) -> torch.Tensor:
+#         # batchwise gpu computation
+#         # u has shape (batch_size,nx)
+
+#         # Compute the x derivatives using the pseudo-spectral method.
+#         uxx = self.psdiff(u, order=2)
+#         # Compute du/dt.
+#         dudt = self.nu * uxx
+#         return dudt
+    
+
+class Heat(PDE):
     """
     The heat equation ut - nu * uxx = 0
     which we use to get data for the Burgers' equation via the Cole-Hopf transformation
@@ -228,7 +303,7 @@ class Burgers(PDE):
         assert (self.grid_size[0] >= self.nt_effective)
 
     def __repr__(self):
-        return f'Burgers'
+        return f'Heat'
     
     def set_device(self,device):
         self.device = device
@@ -251,7 +326,6 @@ class Burgers(PDE):
         # Compute du/dt.
         dudt = self.nu * uxx
         return dudt
-    
     
 class nKdV(PDE):
     """
@@ -368,3 +442,4 @@ class cKdV(PDE):
         # Compute du/dt.
         dudt = (- u*ux - uxxx - (u/(2*t+2)))
         return dudt
+

@@ -85,6 +85,7 @@ def params(pde: PDE, batch_size: int, device: torch.cuda.device="cpu") -> Tuple[
     l = np.random.randint(pde.lmin, pde.lmax, (1, pde.N))
     return A, phi, l
 
+
 def inv_cole_hopf(psi0: np.ndarray, scale: float = 10.) -> np.ndarray:
     """
     Inverse Cole-Hopf transformation to obtain Heat equation out of initial conditions of Burgers' equation.
@@ -175,8 +176,8 @@ def generate_trajectories(pde: PDE,
                     u0 = initial_conditions(A, omega, l, L)(x[:, None])
 
                     # We use the initial condition of Burgers' equation and inverse Cole-Hopf transform it into the Heat equation
-                    if pde_string == 'Burgers':
-                        u0 = inv_cole_hopf(u0)
+                    # if pde_string == 'Burgers':
+                    #     u0 = inv_cole_hopf(u0)
 
                     u0_list.append(u0)
                     
@@ -185,6 +186,8 @@ def generate_trajectories(pde: PDE,
                         
                 u0 = torch.tensor(np.stack(u0_list,axis=0)).to(device)
                 t = torch.tensor(t).to(device)
+
+                print(t, args.solver, tol)
 
                 solved_trajectory = odeint(func=spectral_method,
                                             t=t,
@@ -199,8 +202,9 @@ def generate_trajectories(pde: PDE,
         time_end = time.time()
 
         sol = solved_trajectory.permute(1,0,2)[:,-pde.nt_effective:]
-        if pde_string == 'Burgers':
-            sol = torch.stack([pde.to_burgers(sol[i]) for i in range(sol.shape[0])])
+        # if pde_string == 'Burgers':
+        #     # sol = pde.to_burgers(sol.reshape(-1,nx)).reshape(*sol.shape)
+        #     sol = torch.tensor(cole_hopf(sol.cpu().numpy()))
             
         sol = sol.cpu()
         h5f_u[batch_idx * batch_size:batch_idx * batch_size+n_data, :, :] = sol
@@ -449,10 +453,11 @@ def generate_timestep(u0, t0, cfg):
     # The field u, the coordinations (xcoord, tcoord) and dx, dt are saved
     # Only nt_effective time steps of each trajectories are saved
     # h5f_u = dataset.create_dataset(f'pde_{pde.nt_effective}-{nx}', (num_samples, pde.nt_effective, nx), dtype=float)
-    
 
-    u0 = torch.tensor(u0).to(device)
+    # if pde_string == 'Burgers':
+    #     u0 = torch.tensor(inv_cole_hopf(u0.cpu().numpy()))
 
+    u0 = u0.to(device)
     n_data = u0.shape[0]
     solution = []
     for batch_idx, u in enumerate(u0.split(batch_size)):
@@ -461,52 +466,53 @@ def generate_timestep(u0, t0, cfg):
             L = pde.L
 
             t = np.linspace(t0, t0+dt, 2)
+            # t = np.linspace(0, T, nt)
             x = np.linspace(0, (1 - 1.0 / nx) * L, nx)
-
-            # We use the initial condition of Burgers' equation and inverse Cole-Hopf transform it into the Heat equation
-            if pde_string == 'Burgers':
-                u0 = inv_cole_hopf(u0)
         
             spectral_method = pde.pseudospectral_reconstruction_batch
             t = torch.tensor(t).to(device)
 
+
+            print(t, cfg.generate_data.solver, tol)
+
             solved_trajectory = odeint(func=spectral_method,
                                         t=t,
-                                        y0=u0,
-                                        method=args.solver,
+                                        y0=u,
+                                        method=cfg.generate_data.solver,
                                         atol=tol,
                                         rtol=tol)
             sol = solved_trajectory.permute(1,0,2)
-            if pde_string == 'Burgers':
-                sol = pde.to_burgers(sol.reshape(-1,nx)).reshape(*sol.shape)
+
+            # if pde_string == 'Burgers':
+            #     sol = torch.tensor(cole_hopf(sol.cpu().numpy()))
             sol = sol.cpu() # (n_data, 2, nx)
-            sol = sol[:,1:,:] # (n_data, 1, nx)
+            sol = sol[:,-1,:] # (n_data, nx)
         except AssertionError:
             raise Exception('An error occured - possibly an underflow.')
         solution.append(sol)
-    solution = torch.cat(solution, dim=0) # (n_data, 1, nx)
+    solution = torch.cat(solution, dim=0) # (n_data, nx)
 
     return solution
     
     
-# def generate_initial_conditions(num_initial_conditions, cfg):
-#     pde = _get_pde_object(cfg)
-#     T = pde.tmax
-#     L = pde.L
-#     batch_size = cfg.generate_data.batch_size
-#     device = cfg.device
-#     nx = pde.grid_size[1]
+def generate_initial_conditions(num_initial_conditions, cfg):
+    pde = _get_pde_object(cfg)
+    T = pde.tmax
+    L = pde.L
+    batch_size = cfg.generate_data.batch_size
+    device = cfg.device
+    nx = pde.grid_size[1]
 
-#     u0_list = []
-#     for j in range(num_initial_conditions):
-#         x = np.linspace(0, (1 - 1.0 / nx) * L, nx)
-#         # Parameters for initial conditions
-#         A, omega, l = params(pde, batch_size, device=device)
+    u0_list = []
+    for j in range(num_initial_conditions):
+        x = np.linspace(0, (1 - 1.0 / nx) * L, nx)
+        # Parameters for initial conditions
+        A, omega, l = params(pde, batch_size, device=device)
 
-#         # Initial condition of the equation at end
-#         u0 = initial_conditions(A, omega, l, L)(x[:, None])
+        # Initial condition of the equation at end
+        u0 = initial_conditions(A, omega, l, L)(x[:, None])
 
-#         u0_list.append(u0)
-#     u0 = torch.tensor(np.stack(u0_list,axis=0)).to(device)
+        u0_list.append(u0)
+    u0 = torch.tensor(np.stack(u0_list,axis=0)).to(device)
 
-#     return u0
+    return u0

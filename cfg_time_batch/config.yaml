@@ -1,2 +1,4 @@
 defaults:
   - task: 
+  - mode: deploy
+  

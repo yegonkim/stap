@@ -112,7 +112,7 @@ def run_experiment(cfg):
                 Y_test_pred.append(y_pred.cpu())
             Y_test_pred = torch.cat(Y_test_pred, dim=0)
         
-        metrics = compute_metrics(Y_test, Y_test_pred, d=2)
+        metrics = compute_metrics(Y_test, Y_test_pred, d=2, device=device)
 
         return metrics
 
@@ -135,10 +135,23 @@ def run_experiment(cfg):
                 Y_test_pred.append(y_pred.cpu())
             Y_test_pred = torch.cat(Y_test_pred, dim=0)
         
-        metrics = compute_metrics(Y_test, Y_test_pred, d=2)
+        metrics = compute_metrics(Y_test, Y_test_pred, d=2, device=device)
 
         return metrics
 
+    def evaluate(results):
+        results['datasize'].append((train_nts-1).sum().item())
+        metrics_list = torch.stack([torch.stack(test_per_trajectory(trajectory_model(model, nt-1))) for model in ensemble]) # [ensemble_size, 3, datasize]
+        results['l2_trajectory'].append(metrics_list[:, 0, :].mean().item())
+        results['rel_l2_trajectory'].append(metrics_list[:, 1, :].mean().item())
+        results['mse_trajectory'].append(metrics_list[:, 2, :].mean().item())
+        metrics_list = torch.stack([torch.stack(test_trajectory(model)) for model in ensemble]) # [ensemble_size, 3, datasize]
+        results['l2'].append(metrics_list[:, 0, :].mean().item())
+        results['rel_l2'].append(metrics_list[:, 1, :].mean().item())
+        results['mse'].append(metrics_list[:, 2, :].mean().item())
+        print(f'Datasize: {results["datasize"][-1]}, L2: {results["l2"][-1]}, Rel_l2: {results["rel_l2"][-1]}, MSE: {results["mse"][-1]}, L2_trajectory: {results["l2_trajectory"][-1]}, Rel_l2_trajectory: {results["rel_l2_trajectory"][-1]}, MSE_trajectory: {results["mse_trajectory"][-1]}')
+        wandb.log({'datasize': results['datasize'][-1], f'l2': results['l2'][-1], f'rel_l2': results['rel_l2'][-1], f'mse': results['mse'][-1],f'l2_trajectory': results['l2_trajectory'][-1], f'rel_l2_trajectory': results['rel_l2_trajectory'][-1], f'mse_trajectory': results['mse_trajectory'][-1]})
+    
 
     timestep = (Traj_dataset.traj_train.shape[1] - 1) // (nt - 1) # 10
     # assert timestep == 10 # hardcoded for now (130/ (14-1) = 10)
@@ -163,40 +176,42 @@ def run_experiment(cfg):
     train_nts = acquirer.train_nts
     
     results = {'datasize': [], 'l2': [], 'mse': [], 'rel_l2': [], 'l2_trajectory': [], 'mse_trajectory': [], 'rel_l2_trajectory': []}
+    evaluate(results)
 
-    results['datasize'].append((train_nts-1).sum().item())
-    # rel_l2_list = [test(direct_model(model, nt-1))[1].mean().item() for model in ensemble]
-    metrics_list = torch.stack([torch.stack(test_per_trajectory(trajectory_model(model, nt-1))) for model in ensemble]) # [ensemble_size, 3, datasize]
-    results['l2_trajectory'].append(metrics_list[:, 0, :].mean().item())
-    results['rel_l2_trajectory'].append(metrics_list[:, 1, :].mean().item())
-    results['mse_trajectory'].append(metrics_list[:, 2, :].mean().item())
-    metrics_list = torch.stack([torch.stack(test_trajectory(model)) for model in ensemble]) # [ensemble_size, 3, datasize]
-    results['l2'].append(metrics_list[:, 0, :].mean().item())
-    results['rel_l2'].append(metrics_list[:, 1, :].mean().item())
-    results['mse'].append(metrics_list[:, 2, :].mean().item())
-    print(f'Datasize: {results["datasize"][-1]}, L2: {results["l2"][-1]}, Rel_l2: {results["rel_l2"][-1]}, MSE: {results["mse"][-1]}, L2_trajectory: {results["l2_trajectory"][-1]}, Rel_l2_trajectory: {results["rel_l2_trajectory"][-1]}, MSE_trajectory: {results["mse_trajectory"][-1]}')
-    wandb.log({'datasize': results['datasize'][-1], f'l2': results['l2'][-1], f'rel_l2': results['rel_l2'][-1], f'mse': results['mse'][-1], f'l2_trajectory': results['l2_trajectory'][-1], f'rel_l2_trajectory': results['rel_l2_trajectory'][-1], f'mse_trajectory': results['mse_trajectory'][-1]})
-    
     for acquire_step in range(1, num_acquire+1):
         acquirer.select()
         ensemble = [train(Y, acquirer.train_nts, acquire_step=acquire_step) for _ in tqdm(range(ensemble_size))]
         acquirer.ensemble = ensemble
         train_nts = acquirer.train_nts
+        evaluate(results)
 
-        results['datasize'].append((train_nts-1).sum().item())
-        # rel_l2_list = [test(direct_model(model, nt-1))[1].mean().item() for model in ensemble]
-        metrics_list = torch.stack([torch.stack(test_per_trajectory(trajectory_model(model, nt-1))) for model in ensemble]) # [ensemble_size, 3, datasize]
-        results['l2_trajectory'].append(metrics_list[:, 0, :].mean().item())
-        results['rel_l2_trajectory'].append(metrics_list[:, 1, :].mean().item())
-        results['mse_trajectory'].append(metrics_list[:, 2, :].mean().item())
-        metrics_list = torch.stack([torch.stack(test_trajectory(model)) for model in ensemble]) # [ensemble_size, 3, datasize]
-        results['l2'].append(metrics_list[:, 0, :].mean().item())
-        results['rel_l2'].append(metrics_list[:, 1, :].mean().item())
-        results['mse'].append(metrics_list[:, 2, :].mean().item())
-        print(f'Datasize: {results["datasize"][-1]}, L2: {results["l2"][-1]}, Rel_l2: {results["rel_l2"][-1]}, MSE: {results["mse"][-1]}, L2_trajectory: {results["l2_trajectory"][-1]}, Rel_l2_trajectory: {results["rel_l2_trajectory"][-1]}, MSE_trajectory: {results["mse_trajectory"][-1]}')
-        wandb.log({'datasize': results['datasize'][-1], f'l2': results['l2'][-1], f'rel_l2': results['rel_l2'][-1], f'mse': results['mse'][-1],f'l2_trajectory': results['l2_trajectory'][-1], f'rel_l2_trajectory': results['rel_l2_trajectory'][-1], f'mse_trajectory': results['mse_trajectory'][-1]})
-    
     return results
+
+def mean_std_normalize():
+    assert Traj_dataset.traj_train is not None
+    mean = Traj_dataset.traj_train[:32].mean()
+    std = Traj_dataset.traj_train[:32].std()
+    print(f'Mean: {mean}, Std: {std}')
+    Traj_dataset.traj_train = (Traj_dataset.traj_train - mean) / std
+    if Traj_dataset.traj_valid is not None:
+        Traj_dataset.traj_valid = (Traj_dataset.traj_valid - mean) / std
+    Traj_dataset.traj_test = (Traj_dataset.traj_test - mean) / std
+    Traj_dataset.mean = mean
+    Traj_dataset.std = std
+
+def max_min_normalize():
+    assert Traj_dataset.traj_train is not None
+    max_val = Traj_dataset.traj_train[:32].max()
+    min_val = Traj_dataset.traj_train[:32].min()
+    mean = (max_val + min_val) / 2
+    std = (max_val - min_val) / 2
+    print(f'Max: {max_val}, Min: {min_val}')
+    Traj_dataset.traj_train = (Traj_dataset.traj_train - mean) / std
+    if Traj_dataset.traj_valid is not None:
+        Traj_dataset.traj_valid = (Traj_dataset.traj_valid - mean) / std
+    Traj_dataset.traj_test = (Traj_dataset.traj_test - mean) / std
+    Traj_dataset.mean = mean
+    Traj_dataset.std = std
 
 @hydra.main(version_base=None, config_path="cfg_time_batch", config_name="config.yaml")
 def main(cfg: OmegaConf):
@@ -224,6 +239,10 @@ def main(cfg: OmegaConf):
     with h5py.File(cfg.dataset.test_path, 'r') as f:
         Traj_dataset.traj_test = torch.tensor(f['test']['pde_140-256'][:cfg.testsize, :131], dtype=torch.float32)
 
+    if cfg.equation == 'Heat' or cfg.equation == 'KS':
+        max_min_normalize()
+    else:
+        mean_std_normalize()
     run_experiment(cfg)
 
     wandb.finish()

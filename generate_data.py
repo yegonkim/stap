@@ -12,7 +12,7 @@ import time
 from typing import Tuple
 from copy import copy
 from datetime import datetime
-from PDEs import PDE, KdV, KS, Burgers, nKdV, cKdV
+from PDEs import PDE, KdV, KS, nKdV, cKdV, Heat
 from torchdiffeq import odeint
 
 
@@ -84,6 +84,7 @@ def params(pde: PDE, batch_size: int, device: torch.cuda.device="cpu") -> Tuple[
     phi = 2.0 * np.pi * np.random.rand(1, pde.N)
     l = np.random.randint(pde.lmin, pde.lmax, (1, pde.N))
     return A, phi, l
+
 
 def inv_cole_hopf(psi0: np.ndarray, scale: float = 10.) -> np.ndarray:
     """
@@ -175,8 +176,8 @@ def generate_trajectories(pde: PDE,
                     u0 = initial_conditions(A, omega, l, L)(x[:, None])
 
                     # We use the initial condition of Burgers' equation and inverse Cole-Hopf transform it into the Heat equation
-                    if pde_string == 'Burgers':
-                        u0 = inv_cole_hopf(u0)
+                    # if pde_string == 'Burgers':
+                    #     u0 = inv_cole_hopf(u0)
 
                     u0_list.append(u0)
                     
@@ -199,8 +200,9 @@ def generate_trajectories(pde: PDE,
         time_end = time.time()
 
         sol = solved_trajectory.permute(1,0,2)[:,-pde.nt_effective:]
-        if pde_string == 'Burgers':
-            sol = pde.to_burgers(sol.reshape(-1,nx)).reshape(*sol.shape)
+        # if pde_string == 'Burgers':
+        #     # sol = pde.to_burgers(sol.reshape(-1,nx)).reshape(*sol.shape)
+        #     sol = torch.tensor(cole_hopf(sol.cpu().numpy()))
             
         sol = sol.cpu()
         h5f_u[batch_idx * batch_size:batch_idx * batch_size+n_data, :, :] = sol
@@ -272,16 +274,25 @@ def generate_data(experiment: str,
                  nt_effective=nt_effective,
                  L=L,
                  device=device)
+    elif experiment == 'Heat':
+        pde = Heat(tmin=starting_time,
+                    tmax=end_time,
+                    grid_size=(nt, nx),
+                    nt_effective=nt_effective,
+                    nu=nu,
+                    L=L,
+                    device=device)
+        
 
-    elif experiment == 'Burgers':
-        # Heat equation is generated; afterwards trajectories are transformed via Cole-Hopf transformation.
-        # L is not set for Burgers equation, since it is very sensitive. Default value is 2*math.pi.
-        pde = Burgers(tmin=starting_time,
-                 tmax=end_time,
-                 grid_size=(nt, nx),
-                 nt_effective=nt_effective,
-                 nu=nu,
-                 device=device)
+    # elif experiment == 'Burgers':
+    #     # Heat equation is generated; afterwards trajectories are transformed via Cole-Hopf transformation.
+    #     # L is not set for Burgers equation, since it is very sensitive. Default value is 2*math.pi.
+    #     pde = Burgers(tmin=starting_time,
+    #              tmax=end_time,
+    #              grid_size=(nt, nx),
+    #              nt_effective=nt_effective,
+    #              nu=nu,
+    #              device=device)
     elif experiment == 'nKdV':
         pde = nKdV(tmin=starting_time,
                   tmax=end_time,
@@ -401,16 +412,23 @@ def _get_pde_object(cfg):
                  nt_effective=nt_effective,
                  L=L,
                  device=device)
+    elif experiment=='Heat':
+        pde = Heat(tmin=starting_time,
+                   tmax=end_time,
+                   grid_size=(nt, nx),
+                   nt_effective=nt_effective,
+                   L=L,
+                   device=device)
 
-    elif experiment == 'Burgers':
-        # Heat equation is generated; afterwards trajectories are transformed via Cole-Hopf transformation.
-        # L is not set for Burgers equation, since it is very sensitive. Default value is 2*math.pi.
-        pde = Burgers(tmin=starting_time,
-                 tmax=end_time,
-                 grid_size=(nt, nx),
-                 nt_effective=nt_effective,
-                 nu=cfg.generate_data.nu,
-                 device=device)
+    # elif experiment == 'Burgers':
+    #     # Heat equation is generated; afterwards trajectories are transformed via Cole-Hopf transformation.
+    #     # L is not set for Burgers equation, since it is very sensitive. Default value is 2*math.pi.
+    #     pde = Burgers(tmin=starting_time,
+    #              tmax=end_time,
+    #              grid_size=(nt, nx),
+    #              nt_effective=nt_effective,
+    #              nu=cfg.generate_data.nu,
+    #              device=device)
     elif experiment == 'nKdV':
         pde = nKdV(tmin=starting_time,
                   tmax=end_time,
@@ -431,7 +449,7 @@ def _get_pde_object(cfg):
     return pde
 
 @torch.no_grad()
-def generate_timestep(u0, t0, cfg):
+def generate_timestep(u0, t0, cfg, t1=None):
     device = cfg.device
     batch_size = cfg.generate_data.batch_size
 
@@ -451,20 +469,22 @@ def generate_timestep(u0, t0, cfg):
     # h5f_u = dataset.create_dataset(f'pde_{pde.nt_effective}-{nx}', (num_samples, pde.nt_effective, nx), dtype=float)
 
     # if pde_string == 'Burgers':
-    #     u0 = u0.cpu().numpy()
-    #     u0 = inv_cole_hopf(u0)
-    #     u0 = torch.tensor(u0)
+    #     u0 = torch.tensor(inv_cole_hopf(u0.cpu().numpy()))
 
+    if t1 is None:
+        t1 = t0 + dt
+    t = np.linspace(t0, t1, 2)
     u0 = u0.to(device)
     n_data = u0.shape[0]
     solution = []
     for batch_idx, u in enumerate(u0.split(batch_size)):
         try:
-            T = pde.tmax
-            L = pde.L
+            # T = pde.tmax
+            # L = pde.L
 
-            t = np.linspace(t0, t0+dt, 2)
-            x = np.linspace(0, (1 - 1.0 / nx) * L, nx)
+            
+            # t = np.linspace(0, T, nt)
+            # x = np.linspace(0, (1 - 1.0 / nx) * L, nx)
         
             spectral_method = pde.pseudospectral_reconstruction_batch
             t = torch.tensor(t).to(device)
@@ -478,35 +498,35 @@ def generate_timestep(u0, t0, cfg):
             sol = solved_trajectory.permute(1,0,2)
 
             # if pde_string == 'Burgers':
-            #     sol = pde.to_burgers(sol.reshape(-1,nx)).reshape(*sol.shape)
+            #     sol = torch.tensor(cole_hopf(sol.cpu().numpy()))
             sol = sol.cpu() # (n_data, 2, nx)
-            sol = sol[:,1,:] # (n_data, 1, nx)
+            sol = sol[:,-1,:] # (n_data, nx)
         except AssertionError:
             raise Exception('An error occured - possibly an underflow.')
         solution.append(sol)
-    solution = torch.cat(solution, dim=0) # (n_data, 1, nx)
+    solution = torch.cat(solution, dim=0) # (n_data, nx)
 
     return solution
     
     
-# def generate_initial_conditions(num_initial_conditions, cfg):
-#     pde = _get_pde_object(cfg)
-#     T = pde.tmax
-#     L = pde.L
-#     batch_size = cfg.generate_data.batch_size
-#     device = cfg.device
-#     nx = pde.grid_size[1]
+def generate_initial_conditions(num_initial_conditions, cfg):
+    pde = _get_pde_object(cfg)
+    T = pde.tmax
+    L = pde.L
+    batch_size = cfg.generate_data.batch_size
+    device = cfg.device
+    nx = pde.grid_size[1]
 
-#     u0_list = []
-#     for j in range(num_initial_conditions):
-#         x = np.linspace(0, (1 - 1.0 / nx) * L, nx)
-#         # Parameters for initial conditions
-#         A, omega, l = params(pde, batch_size, device=device)
+    u0_list = []
+    for j in range(num_initial_conditions):
+        x = np.linspace(0, (1 - 1.0 / nx) * L, nx)
+        # Parameters for initial conditions
+        A, omega, l = params(pde, batch_size, device=device)
 
-#         # Initial condition of the equation at end
-#         u0 = initial_conditions(A, omega, l, L)(x[:, None])
+        # Initial condition of the equation at end
+        u0 = initial_conditions(A, omega, l, L)(x[:, None])
 
-#         u0_list.append(u0)
-#     u0 = torch.tensor(np.stack(u0_list,axis=0)).to(device)
+        u0_list.append(u0)
+    u0 = torch.tensor(np.stack(u0_list,axis=0)).to(device)
 
-#     return u0
+    return u0

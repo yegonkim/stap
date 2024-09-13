@@ -3,7 +3,7 @@ equation:
 nt: 14
 
 datasize: 1000
-testsize: 10000
+testsize: 1000
 # testsize: 1000
 # exponential_data: False
 initial_datasize: 128
