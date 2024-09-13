@@ -9,7 +9,6 @@ import argparse
 import time
 
 from eval_utils import compute_metrics
-from custom_paths import get_results_path
 from utils import set_seed, flatten_configdict, trajectory_model, direct_model, split_model
 from acquisition.acquirers_batched import Acquirer_batched
 
@@ -29,6 +28,9 @@ def run_experiment(cfg):
     wandb.define_metric("l2", step_metric="datasize")
     wandb.define_metric("rel_l2", step_metric="datasize")
     wandb.define_metric("mse", step_metric="datasize")
+    wandb.define_metric("l2_trajectory", step_metric="datasize")
+    wandb.define_metric("rel_l2_trajectory", step_metric="datasize")
+    wandb.define_metric("mse_trajectory", step_metric="datasize")
 
     unrolling = cfg.train.unrolling
     nt = cfg.nt

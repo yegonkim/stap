@@ -191,6 +191,33 @@ def run_experiment(cfg):
         wandb.log({'datasize': results['datasize'][-1], f'l2': results['l2'][-1], f'rel_l2': results['rel_l2'][-1], f'mse': results['mse'][-1], f'l2_trajectory': results['l2_trajectory'][-1], f'rel_l2_trajectory': results['rel_l2_trajectory'][-1], f'mse_trajectory': results['mse_trajectory'][-1]})
     return results
 
+
+def mean_std_normalize():
+    assert Traj_dataset.traj_train is not None
+    mean = Traj_dataset.traj_train[:32].mean()
+    std = Traj_dataset.traj_train[:32].std()
+    print(f'Mean: {mean}, Std: {std}')
+    Traj_dataset.traj_train = (Traj_dataset.traj_train - mean) / std
+    if Traj_dataset.traj_valid is not None:
+        Traj_dataset.traj_valid = (Traj_dataset.traj_valid - mean) / std
+    Traj_dataset.traj_test = (Traj_dataset.traj_test - mean) / std
+    Traj_dataset.mean = mean
+    Traj_dataset.std = std
+
+def max_min_normalize():
+    assert Traj_dataset.traj_train is not None
+    max_val = Traj_dataset.traj_train[:32].max()
+    min_val = Traj_dataset.traj_train[:32].min()
+    mean = (max_val + min_val) / 2
+    std = (max_val - min_val) / 2
+    print(f'Max: {max_val}, Min: {min_val}')
+    Traj_dataset.traj_train = (Traj_dataset.traj_train - mean) / std
+    if Traj_dataset.traj_valid is not None:
+        Traj_dataset.traj_valid = (Traj_dataset.traj_valid - mean) / std
+    Traj_dataset.traj_test = (Traj_dataset.traj_test - mean) / std
+    Traj_dataset.mean = mean
+    Traj_dataset.std = std
+
 @hydra.main(version_base=None, config_path="cfg_long", config_name="config.yaml")
 def main(cfg: OmegaConf):
     print("Input arguments:")
@@ -217,6 +244,10 @@ def main(cfg: OmegaConf):
     with h5py.File(cfg.dataset.test_path, 'r') as f:
         Traj_dataset.traj_test = torch.tensor(f['test']['pde_140-256'][:cfg.testsize, :131], dtype=torch.float32)
 
+    if cfg.equation == 'Heat' or cfg.equation == 'KS':
+        max_min_normalize()
+    else:
+        mean_std_normalize()
     run_experiment(cfg)
 
     wandb.finish()

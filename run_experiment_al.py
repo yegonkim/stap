@@ -10,7 +10,7 @@ import argparse
 import time
 
 from eval_utils import compute_metrics
-from custom_paths import get_results_path
+
 from utils import set_seed, flatten_configdict
 from acquisition.acquirers import select
 

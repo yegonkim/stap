@@ -40,8 +40,6 @@ def run_experiment(cfg):
     def train(Y, train_indices, **kwargs):
         assert unrolling == 0
 
-        acquire_step = kwargs.get('acquire_step', 0)
-
         model = FNO(n_modes=(256, ), hidden_channels=64,
                     in_channels=1, out_channels=1)
 
@@ -193,10 +191,10 @@ def run_experiment(cfg):
 
 @hydra.main(version_base=None, config_path="cfg_selective", config_name="config.yaml")
 def main(cfg: OmegaConf):
+    set_seed(cfg.seed)
+
     print("Input arguments:")
     print(OmegaConf.to_yaml(cfg))
-
-    set_seed(cfg.seed)
 
     if cfg.wandb.use:
         if cfg.wandb.project is None:
@@ -212,7 +210,7 @@ def main(cfg: OmegaConf):
 
     print('Loading training data...')
     with h5py.File(cfg.dataset.train_path, 'r') as f:
-        Traj_dataset.traj_train = torch.tensor(f['train']['pde_140-256'][:cfg.datasize, :131], dtype=torch.float32)
+        Traj_dataset.traj_train = torch.tensor(f['train']['pde_140-256'][:cfg.datasize-cfg.max_prelim_datasize, :131], dtype=torch.float32)
     print('Loading test data...')
     with h5py.File(cfg.dataset.test_path, 'r') as f:
         Traj_dataset.traj_test = torch.tensor(f['test']['pde_140-256'][:cfg.testsize, :131], dtype=torch.float32)

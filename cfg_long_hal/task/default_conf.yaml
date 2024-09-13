@@ -2,22 +2,17 @@
 equation: 
 nt: 14
 
-datasize: 1000
-testsize: 10000
-# testsize: 1000
+datasize: 4096
+testsize: 1000
 # exponential_data: False
-initial_datasize: 128
-batch_acquire: 32
-num_acquire: 4 # 128 + 32*4 = 256
-ensemble_size: 5
-num_random_pool: 1000
-std: 1e-2
+initial_datasize: 32
+num_acquire: 4
+ensemble_size: 1
+p: 1.0
 
-scenario: fixed # fixed, flexible
-initial_selection_method: random # random, variance, stochastic, lcmd
-post_selection_method: all # all, variance_prior, variance_direct
-optimization_method: greedy # greedy, individual
-flexible_selection_method: random # variance, stochastic, lcmd
+# preliminary
+prelim_datasize: [16, 32, 64, 128, 256]
+p_list: [1.0, 0.5, 0.25, 0.125]
 
 comment: 
 
@@ -39,7 +34,7 @@ generate_data:
   end_time: 
   nt_effective: 140
   solver: dopri5
-  batch_size: 10000
+  batch_size: 4096
   nu: 
 
 wandb:

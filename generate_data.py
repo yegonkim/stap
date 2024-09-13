@@ -449,7 +449,7 @@ def _get_pde_object(cfg):
     return pde
 
 @torch.no_grad()
-def generate_timestep(u0, t0, cfg, t1=None):
+def generate_timestep(u0, cfg, t0=0, timesteps=1, dt=None):
     device = cfg.device
     batch_size = cfg.generate_data.batch_size
 
@@ -461,7 +461,8 @@ def generate_timestep(u0, t0, cfg, t1=None):
     
     nt = cfg.generate_data.nt
     end_time = cfg.generate_data.end_time
-    dt = end_time / (nt-1)
+    if dt is None:
+        dt = end_time / (nt-1)
     nx = pde.grid_size[1]
     
     # The field u, the coordinations (xcoord, tcoord) and dx, dt are saved
@@ -471,9 +472,10 @@ def generate_timestep(u0, t0, cfg, t1=None):
     # if pde_string == 'Burgers':
     #     u0 = torch.tensor(inv_cole_hopf(u0.cpu().numpy()))
 
-    if t1 is None:
-        t1 = t0 + dt
-    t = np.linspace(t0, t1, 2)
+    t = np.linspace(t0, t0+dt*timesteps, timesteps+1)
+
+    assert u0.shape[1] == 1
+    u0 = u0.squeeze(1)
     u0 = u0.to(device)
     n_data = u0.shape[0]
     solution = []
@@ -495,16 +497,16 @@ def generate_timestep(u0, t0, cfg, t1=None):
                                         method=cfg.generate_data.solver,
                                         atol=tol,
                                         rtol=tol)
-            sol = solved_trajectory.permute(1,0,2)
+            sol = solved_trajectory.permute(1,0,2) # (n_data, nt, nx)
+            sol = sol[:, 1:]
 
             # if pde_string == 'Burgers':
             #     sol = torch.tensor(cole_hopf(sol.cpu().numpy()))
-            sol = sol.cpu() # (n_data, 2, nx)
-            sol = sol[:,-1,:] # (n_data, nx)
+            sol = sol.cpu() # (n_data, nt, nx)
         except AssertionError:
             raise Exception('An error occured - possibly an underflow.')
         solution.append(sol)
-    solution = torch.cat(solution, dim=0) # (n_data, nx)
+    solution = torch.cat(solution, dim=0) # (n_data, nt, nx)
 
     return solution
     

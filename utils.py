@@ -62,3 +62,11 @@ class split_model(torch.nn.Module):
     def forward(self, x):
         y = [self.model(x_split) for x_split in x.split(self.batch_size)]
         return torch.cat(y, dim=0)
+    
+class ensemble_mean_model(torch.nn.Module):
+    def __init__(self, ensemble):
+        super().__init__()
+        self.ensemble = ensemble
+    def forward(self, x):
+        y = [model(x) for model in self.ensemble]
+        return torch.stack(y).mean(dim=0)
