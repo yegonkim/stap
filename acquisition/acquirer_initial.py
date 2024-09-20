@@ -1,10 +1,11 @@
 import torch
 from tqdm import tqdm
-from .feature_functions import get_features_ycov, get_features_hidden, get_features_hidden_trajectory, get_features_ycov_trajectory
+from .feature_functions import get_features_hidden_trajectory, get_features_ycov_trajectory
 from utils import direct_model, trajectory_model, split_model, torch_delete, torch_expand
 import numpy as np
+from .acquisition_function import EER_Calculator
 
-class Acquirer_batched:
+class Acquirer_initial:
     def __init__(self, ensemble, Y, train_nts, **cfg):
         self.device = cfg.get('device', 'cpu')
         self.ensemble = ensemble
@@ -38,6 +39,7 @@ class Acquirer_batched:
             indices = torch.arange(bs)[self.train_nts == 1]
             scores = self._compute_scores(starting_time=0, batch_indices=indices).sum(dim=-1).cpu()
             probabilities = scores / scores.sum()
+            probabilities = probabilities.pow(self.cfg.get('stochastic_temperature', 1.0))
             top_indices = torch.multinomial(probabilities, num_samples=batch_size, replacement=False)
             batch_indices = indices[top_indices]
         elif "lcmd" in selection_method.split("_"):
@@ -155,25 +157,34 @@ class Acquirer_batched:
         nt = self.nt
         train_nts= self.train_nts
 
-        if "single" in selection_method.split("_"):
-            if "zero" in selection_method.split("_"):
-                starting_time = train_nts * 0
-                mask = train_nts
-            elif "last" in selection_method.split("_"):
-                starting_time = train_nts - 1
-                mask = train_nts
-            elif "ignore" in selection_method.split("_"):
-                starting_time = (train_nts > 1).int() * (nt-1)
-                mask = (train_nts > 1).int() * (nt-1) + 1
-            else:
-                raise ValueError(f"Selection method {selection_method} not implemented.")
+        # if "single" in selection_method.split("_"):
+        if True:
+            # if "zero" in selection_method.split("_"):
+            # if True:
+            #     starting_time = train_nts * 0
+            #     mask = train_nts
+            # elif "last" in selection_method.split("_"):
+            #     # starting_time = train_nts - 1
+            #     # mask = train_nts
+            #     raise NotImplementedError()
+            # elif "ignore" in selection_method.split("_"):
+            #     # starting_time = (train_nts > 1).int() * (nt-1)
+            #     # mask = (train_nts > 1).int() * (nt-1) + 1
+            #     raise NotImplementedError()
+            # else:
+            #     raise ValueError(f"Selection method {selection_method} not implemented.")
+            
+            starting_time = train_nts * 0
 
             if "variance" in selection_method.split("_"):
                 stochastic_method = "plain"
                 if "prior" in selection_method.split("_"):
                     scores = self._compute_variance_prior(self.Y, starting_time) # [bs, nt]
                 elif "direct" in selection_method.split("_"):
-                    scores = self._compute_variance_direct(self.Y, starting_time) # [bs, nt]
+                    if "proper" in selection_method.split("_"):
+                        scores = self._compute_variance_direct_proper(self.Y, starting_time)
+                    else:
+                        scores = self._compute_variance_direct(self.Y, starting_time) # [bs, nt]
                 else:
                     raise ValueError(f"Selection method {selection_method} not implemented.")
             elif "mutual" in selection_method.split("_"):
@@ -189,50 +200,71 @@ class Acquirer_batched:
             else:
                 raise ValueError(f"Selection method {selection_method} not implemented.")
 
-            scores=scores.cpu()
-            selected = []
+            scores=scores.cpu() # [bs, nt]
+
+            # scores[torch.arange(nt)[None,:] < (train_nts)[:,None]] = 0
+            scores[scores == float('inf')] = 0
+            scores[scores.isnan()] = 0
+
             total_cost = 0
-            costs = torch.arange(nt)[None,:] - (train_nts-1)[:,None] # [bs, nt]
-            utility = scores / costs # [bs, nt]
-            utility[torch.arange(nt)[None,:] < (mask+1)[:,None]] = -np.inf
-            utility[utility == float('inf')] = -np.inf
-            utility[utility.isnan()] = -np.inf
+            selected = []
+            # costs = torch.arange(nt)[None,:] - (train_nts-1)[:,None] # [bs, nt]
+            train_nts_temp = train_nts.clone()
             while total_cost < batch_size * (nt-1):
+                # costs = torch.arange(nt)[None,:] - (train_nts_temp-1)[:,None] # [bs, nt]
+                costs = torch.arange(nt)[None,:] - (train_nts_temp-1)[:,None] # [bs, nt]
+                costs = torch.clamp(costs, min=0) # [bs, nt]
+                # utility = (scores - scores[train_nts_temp-1]) / costs
+                utility = scores / costs
+                # utility[torch.arange(nt)[None,:] < (train_nts_temp)[:,None]] = -np.inf
+                utility[train_nts_temp > 1, :] = -np.inf
+                utility[utility == float('inf')] = -np.inf
+                utility[utility.isnan()] = -np.inf
+                utility[costs > batch_size * (nt-1) - total_cost] = -np.inf
+                utility[utility == 0] = -np.inf
+
+                if utility.max() == -np.inf:
+                    # break 
+                    raise ValueError("No more samples to select.")
                 if "max" in selection_method.split("_"):
                     max_indices = torch.argmax(utility.flatten()) # an index in [0, bs*nt)
-                    index = max_indices // nt # an index in [0, bs)
-                    time = max_indices % nt # an index in [0, nt)
-                    assert time < nt
-                    assert utility[index, time] == torch.max(utility).item()
+                    # index = max_indices // nt # an index in [0, bs)
+                    # time = max_indices % nt # an index in [0, nt)
+                    # assert time < nt
+                    # assert utility[index, time] == torch.max(utility).item()
                 elif "stochastic" in selection_method.split("_"):
                     if stochastic_method == "plain":
                         utility_temp = utility.clone()
                         utility_temp[utility_temp < 0] = 0
                         utility_temp = torch.log(utility_temp)
-                        gumbel_noise = -torch.log(-torch.log(torch.rand_like(utility)))
-                        utility_noisy = utility_temp + gumbel_noise
-                        max_indices = torch.argmax(utility_noisy.flatten())
                     elif stochastic_method == "log":
-                        gumbel_noise = -torch.log(-torch.log(torch.rand_like(utility)))
-                        utility_noisy = utility + gumbel_noise
-                        max_indices = torch.argmax(utility_noisy.flatten())
-                    index = max_indices // nt
-                    time = max_indices % nt
-                    assert time < nt
+                        utility_temp = utility.clone()
+                    utility_temp = utility_temp * self.cfg.get('stochastic_temperature', 1.0)
+                    gumbel_noise = -torch.log(-torch.log(torch.rand_like(utility_temp)))
+                    utility_noisy = utility_temp + gumbel_noise
+                    max_indices = torch.argmax(utility_noisy.flatten())
+                index = max_indices // nt
+                time = max_indices % nt
+                # if 'ignore' in selection_method.split("_"):
+                    # scores[index] = torch.nan
+                
+
+                assert time < nt
                 cost = costs[index, time]
                 assert cost > 0
-                # print(cost)
                 total_cost += cost
                 selected.append((index, time))
-                utility[index, :] = -np.inf
-            selected.pop(-1) # remove the last selection so that the total cost is less than batch_size * (nt-1)
+                train_nts_temp[index] = time + 1
+                print(total_cost)
+
+            assert (train_nts_temp-1).sum().item() - (train_nts-1).sum().item() == total_cost
+            assert (train_nts_temp >= train_nts).all()
+            self.train_nts = train_nts_temp
+            # for index, time in selected:
+            #     assert train_nts[index] < time + 1
+            #     train_nts[index] = time + 1
+            # self.train_nts = train_nts
             
-
-            for index, time in selected:
-                assert train_nts[index] < time + 1
-                train_nts[index] = time + 1
-            self.train_nts = train_nts
-
             print(f"Selected {len(selected)} samples with total cost {total_cost}")
             print(selected)
         elif "batch" in selection_method.split("_"):
@@ -244,9 +276,8 @@ class Acquirer_batched:
 
         return self.train_nts
 
-    def select(self):
+    def select(self, batch_size):
         scenario = self.cfg.get('scenario', 'fixed')
-        batch_size = self.cfg.get('batch_acquire', 1)
 
         if scenario == 'fixed':
             initial_selection_method = self.cfg.get('initial_selection_method', 'random')
@@ -352,65 +383,221 @@ class Acquirer_batched:
         variance = torch.sum(features**2, dim=(0, 3)) # [bs, nt]
         scores = torch.cumsum(variance, dim=1) # [bs, nt]
         return scores
-    
+
     @torch.no_grad()
     def _compute_variance_direct(self, Y: torch.Tensor, starting_time: torch.Tensor):
+        assert (starting_time == 0).all()
         nt = self.nt
+        L = nt-1
         bs = Y.shape[0]
-        timesteps = (nt - 1) - starting_time
         ensemble = self.ensemble
 
-        X = self.Y[torch.arange(bs), starting_time].unsqueeze(1) # [bs, 1, nx]
-        assert X.shape == (bs, 1, Y.shape[2])
-        max_timesteps = timesteps.max()
-        pred_trajectory = torch_expand(X.unsqueeze(0), 0, len(ensemble)) # [n_models, bs, 1, nx]
-        assert pred_trajectory.shape == (len(ensemble), bs, 1, X.shape[2])
-        for t in range(max_timesteps):
-            indices = timesteps > t
-            if not indices.any():
-                break
-            
-            X_t = pred_trajectory[:, indices, t:t+1] # [n_models, bs_indices, 1, nx]
-            assert X_t.shape == (len(ensemble), indices.sum(), 1, X.shape[2])
-            pred = []
-            with torch.no_grad():
-                for i, model in enumerate(ensemble):
-                    model.eval()
-                    pred.append(split_model(model, self.eval_batch_size)(X_t[i]))
-            pred = torch.stack(pred, dim=0) # [n_models, bs_indices, 1, nx]
-            assert pred.shape == (len(ensemble), indices.sum(), 1, X.shape[2])
-            pred_with_zeros = torch.zeros(len(ensemble), X.shape[0], 1, *X.shape[2:], device=self.device) # [n_models, bs, 1, nx]
-            assert pred_with_zeros.shape == (len(ensemble), bs, 1, X.shape[2])
-            pred_with_zeros[:, indices] = pred
-            pred_trajectory = torch.cat([pred_trajectory, pred_with_zeros], dim=2) # [n_models, bs, t+2, nx]
-            assert pred_trajectory.shape == (len(ensemble), bs, t+2, X.shape[2])
-        pred_trajectory = pred_trajectory.mean(dim=0) # [bs, max_timesteps+1, nx]
-        assert pred_trajectory.shape == (bs, max_timesteps+1, X.shape[2])
-        pred = torch.zeros(bs, nt, *X.shape[2:], device=self.device)
-        pred[torch.arange(nt)[None,:]>=starting_time[:,None]] = pred_trajectory[torch.arange(nt)[None,:]<(timesteps+1)[:,None]] # [bs, nt, nx]
-        # pred[torch.arange(nt)[None,:]>=starting_time[:,None]] = pred_trajectory[torch.arange(bs), :timesteps+1] # [bs, nt, nx]
-        
-        scores_list = []
-        for i in range(nt):
-            indices = starting_time <= i
-            if not indices.any():
-                scores_list.append(torch.zeros(bs, device=self.device))
-                continue
-            features = self._compute_features(pred[indices, i:i+1], (nt-1)-i) # [n_models, bs_indices, nt-1-i, nx]
-            assert features.shape == (len(ensemble), indices.sum(), nt-1-i, X.shape[2])
-            variance_temp = torch.sum(features**2, dim=(0, 2, 3)) # [bs_indices]
-            variance = torch.zeros(bs, device=self.device)
-            variance[indices] = variance_temp
-            scores_list.append(variance)
-        variance = torch.stack(scores_list, dim=1) # [bs, nt]
-        assert (variance[:,-1]==0).all()
-        assert variance.shape == (bs, nt)
+        X = self.Y[:, 0].unsqueeze(1)
+        a_star = EER_Calculator(ensemble, X, nt-1, self.eval_batch_size, self.device, mode='MF-EER') # mean field eer calculator
+        S = torch.zeros(bs, L, device=self.device).bool()
+        scores = []
+        scores.append(torch.zeros(bs, device=self.device))
+        for i in tqdm(range(L)):
+            S_i = S.clone()
+            S_i[:, :i+1] = True
+            score = a_star(S_i)
+            scores.append(score)
+        scores = torch.stack(scores, dim=1) # [bs, nt]
 
-        scores = variance[torch.arange(bs), starting_time].unsqueeze(1) - variance # [bs, nt]
-        scores[torch.arange(nt)[None,:] < starting_time[:,None]] = 0
-        assert scores[0, starting_time[0]] == 0
         return scores
     
+    @torch.no_grad()
+    def _compute_variance_direct_proper(self, Y: torch.Tensor, starting_time: torch.Tensor):
+        assert (starting_time == 0).all()
+        nt = self.nt
+        L = nt-1
+        bs = Y.shape[0]
+        ensemble = self.ensemble
+
+        X = self.Y[:, 0].unsqueeze(1)
+        a_star = EER_Calculator(ensemble, X, nt-1, self.eval_batch_size, self.device, mode='EER') # eer calculator
+        S = torch.zeros(bs, L, device=self.device).bool()
+        scores = []
+        scores.append(torch.zeros(bs, device=self.device))
+        for i in tqdm(range(L)):
+            S_i = S.clone()
+            S_i[:, :i+1] = True
+            score = a_star(S_i)
+            scores.append(score)
+        scores = torch.stack(scores, dim=1) # [bs, nt]
+
+        return scores
+    
+    # @torch.no_grad()
+    # def _compute_variance_direct(self, Y: torch.Tensor, starting_time: torch.Tensor):
+    #     nt = self.nt
+    #     bs = Y.shape[0]
+    #     timesteps = (nt - 1) - starting_time
+    #     ensemble = self.ensemble
+
+    #     X = self.Y[torch.arange(bs), starting_time].unsqueeze(1) # [bs, 1, nx]
+    #     assert X.shape == (bs, 1, Y.shape[2])
+    #     max_timesteps = timesteps.max()
+    #     pred_trajectory = torch_expand(X.unsqueeze(0), 0, len(ensemble)) # [n_models, bs, 1, nx]
+    #     assert pred_trajectory.shape == (len(ensemble), bs, 1, X.shape[2])
+    #     for t in range(max_timesteps):
+    #         indices = timesteps > t
+    #         if not indices.any():
+    #             break
+            
+    #         X_t = pred_trajectory[:, indices, t:t+1] # [n_models, bs_indices, 1, nx]
+    #         assert X_t.shape == (len(ensemble), indices.sum(), 1, X.shape[2])
+    #         pred = []
+    #         with torch.no_grad():
+    #             for i, model in enumerate(ensemble):
+    #                 model.eval()
+    #                 pred.append(split_model(model, self.eval_batch_size)(X_t[i]))
+    #         pred = torch.stack(pred, dim=0) # [n_models, bs_indices, 1, nx]
+    #         assert pred.shape == (len(ensemble), indices.sum(), 1, X.shape[2])
+    #         pred_with_zeros = torch.zeros(len(ensemble), X.shape[0], 1, *X.shape[2:], device=self.device) # [n_models, bs, 1, nx]
+    #         assert pred_with_zeros.shape == (len(ensemble), bs, 1, X.shape[2])
+    #         pred_with_zeros[:, indices] = pred
+    #         pred_trajectory = torch.cat([pred_trajectory, pred_with_zeros], dim=2) # [n_models, bs, t+2, nx]
+    #         assert pred_trajectory.shape == (len(ensemble), bs, t+2, X.shape[2])
+    #     pred_trajectory = pred_trajectory.mean(dim=0) # [bs, max_timesteps+1, nx]
+    #     assert pred_trajectory.shape == (bs, max_timesteps+1, X.shape[2])
+    #     pred = torch.zeros(bs, nt, *X.shape[2:], device=self.device)
+    #     pred[torch.arange(nt)[None,:]>=starting_time[:,None]] = pred_trajectory[torch.arange(nt)[None,:]<(timesteps+1)[:,None]] # [bs, nt, nx]
+    #     # pred[torch.arange(nt)[None,:]>=starting_time[:,None]] = pred_trajectory[torch.arange(bs), :timesteps+1] # [bs, nt, nx]
+        
+    #     scores_list = []
+    #     for i in range(nt):
+    #         indices = starting_time <= i
+    #         if not indices.any():
+    #             scores_list.append(torch.zeros(bs, device=self.device))
+    #             continue
+    #         features = self._compute_features(pred[indices, i:i+1], (nt-1)-i) # [n_models, bs_indices, nt-1-i, nx]
+    #         assert features.shape == (len(ensemble), indices.sum(), nt-1-i, X.shape[2])
+    #         variance_temp = torch.sum(features**2, dim=(0, 2, 3)) # [bs_indices]
+    #         variance = torch.zeros(bs, device=self.device)
+    #         variance[indices] = variance_temp
+    #         scores_list.append(variance)
+    #     variance = torch.stack(scores_list, dim=1) # [bs, nt]
+    #     assert (variance[:,-1]==0).all()
+    #     assert variance.shape == (bs, nt)
+
+    #     scores = variance[torch.arange(bs), starting_time].unsqueeze(1) - variance # [bs, nt]
+    #     scores[torch.arange(nt)[None,:] < starting_time[:,None]] = 0
+    #     assert scores[0, starting_time[0]] == 0
+    #     return scores
+    
+
+
+
+    # @torch.no_grad()
+    # def _compute_variance_direct(self, Y: torch.Tensor, starting_time: torch.Tensor):
+    #     # 어차피 starting_time = 0 쓸거임
+    #     nt = self.nt
+    #     bs = Y.shape[0]
+    #     ensemble = self.ensemble
+
+    #     X = self.Y[:, 0].unsqueeze(1) # [bs, 1, nx]
+    #     assert X.shape == (bs, 1, Y.shape[2])
+    #     pred_trajectory = torch_expand(X.unsqueeze(0), 0, len(ensemble)) # [n_models, bs, 1, nx]
+    #     assert pred_trajectory.shape == (len(ensemble), bs, 1, X.shape[2])
+    #     for t in range(nt-1):
+    #         # indices = timesteps > t
+            
+    #         X_t = pred_trajectory[:, :, t:t+1] # [n_models, bs_indices, 1, nx]
+    #         assert X_t.shape == (len(ensemble), bs, 1, X.shape[2])
+    #         pred = []
+    #         with torch.no_grad():
+    #             for i, model in enumerate(ensemble):
+    #                 model.eval()
+    #                 pred.append(split_model(model, self.eval_batch_size)(X_t[i]))
+    #         pred = torch.stack(pred, dim=0) # [n_models, bs_indices, 1, nx]
+    #         assert pred.shape == (len(ensemble), bs, 1, X.shape[2])
+    #         # pred_with_zeros = torch.zeros(len(ensemble), X.shape[0], 1, *X.shape[2:], device=self.device) # [n_models, bs, 1, nx]
+    #         # assert pred_with_zeros.shape == (len(ensemble), bs, 1, X.shape[2])
+    #         # pred_with_zeros[:, indices] = pred
+    #         pred_trajectory = torch.cat([pred_trajectory, pred], dim=2) # [n_models, bs, t+2, nx]
+    #         assert pred_trajectory.shape == (len(ensemble), bs, t+2, X.shape[2])
+    #     pred_trajectory = pred_trajectory.mean(dim=0) # [bs, max_timesteps+1, nx]
+    #     assert pred_trajectory.shape == (bs, nt, X.shape[2])
+    #     pred = pred_trajectory # [bs, nt, nx]
+    #     # pred = torch.zeros(bs, nt, *X.shape[2:], device=self.device)
+    #     # pred[torch.arange(nt)[None,:]>=starting_time[:,None]] = pred_trajectory[torch.arange(nt)[None,:]<(timesteps+1)[:,None]] # [bs, nt, nx]
+    #     # pred[torch.arange(nt)[None,:]>=starting_time[:,None]] = pred_trajectory[torch.arange(bs), :timesteps+1] # [bs, nt, nx]
+        
+    #     scores_list = []
+    #     for i in range(nt):
+    #         features = self._compute_features(pred[:, i:i+1], (nt-1)-i) # [n_models, bs_indices, nt-1-i, nx]
+    #         assert features.shape == (len(ensemble), features.shape[1], nt-1-i, X.shape[2])
+    #         variance = torch.sum(features**2, dim=(0, 2, 3)) # [bs_indices]
+    #         # variance = torch.zeros(bs, device=self.device)
+    #         # variance[indices] = variance_temp
+    #         scores_list.append(variance)
+    #     variance = torch.stack(scores_list, dim=1) # [bs, nt]
+    #     assert (variance[:,-1]==0).all()
+    #     assert variance.shape == (bs, nt)
+
+    #     scores = variance[:,0].unsqueeze(1) - variance # [bs, nt]
+    #     # scores[torch.arange(nt)[None,:] < starting_time[:,None]] = 0
+    #     # assert scores[0, starting_time[0]] == 0
+    #     return scores
+
+    # @torch.no_grad()
+    # def _compute_variance_direct_proper(self, Y: torch.Tensor, starting_time: torch.Tensor):
+    #     # 어차피 starting_time = 0 쓸거임
+    #     nt = self.nt
+    #     bs = Y.shape[0]
+    #     ensemble = self.ensemble
+    #     assert (starting_time == 0).all()
+
+    #     X = self.Y[:, 0].unsqueeze(1) # [bs, 1, nx]
+        
+
+
+    #     assert X.shape == (bs, 1, Y.shape[2])
+    #     pred_trajectory = torch_expand(X.unsqueeze(0), 0, len(ensemble)) # [n_models, bs, 1, nx]
+    #     assert pred_trajectory.shape == (len(ensemble), bs, 1, X.shape[2])
+    #     for t in range(nt-1):
+    #         # indices = timesteps > t
+            
+    #         X_t = pred_trajectory[:, :, t:t+1] # [n_models, bs_indices, 1, nx]
+    #         assert X_t.shape == (len(ensemble), bs, 1, X.shape[2])
+    #         pred = []
+    #         with torch.no_grad():
+    #             for i, model in enumerate(ensemble):
+    #                 model.eval()
+    #                 pred.append(split_model(model, self.eval_batch_size)(X_t[i]))
+    #         pred = torch.stack(pred, dim=0) # [n_models, bs_indices, 1, nx]
+    #         assert pred.shape == (len(ensemble), bs, 1, X.shape[2])
+    #         # pred_with_zeros = torch.zeros(len(ensemble), X.shape[0], 1, *X.shape[2:], device=self.device) # [n_models, bs, 1, nx]
+    #         # assert pred_with_zeros.shape == (len(ensemble), bs, 1, X.shape[2])
+    #         # pred_with_zeros[:, indices] = pred
+    #         pred_trajectory = torch.cat([pred_trajectory, pred], dim=2) # [n_models, bs, t+2, nx]
+    #         assert pred_trajectory.shape == (len(ensemble), bs, t+2, X.shape[2])
+    #     pred_trajectory = pred_trajectory.mean(dim=0) # [bs, max_timesteps+1, nx]
+    #     assert pred_trajectory.shape == (bs, nt, X.shape[2])
+    #     pred = pred_trajectory # [bs, nt, nx]
+    #     # pred = torch.zeros(bs, nt, *X.shape[2:], device=self.device)
+    #     # pred[torch.arange(nt)[None,:]>=starting_time[:,None]] = pred_trajectory[torch.arange(nt)[None,:]<(timesteps+1)[:,None]] # [bs, nt, nx]
+    #     # pred[torch.arange(nt)[None,:]>=starting_time[:,None]] = pred_trajectory[torch.arange(bs), :timesteps+1] # [bs, nt, nx]
+        
+    #     scores_list = []
+    #     for i in range(nt):
+    #         features = self._compute_features(pred[:, i:i+1], (nt-1)-i) # [n_models, bs_indices, nt-1-i, nx]
+    #         assert features.shape == (len(ensemble), features.shape[1], nt-1-i, X.shape[2])
+    #         variance = torch.sum(features**2, dim=(0, 2, 3)) # [bs_indices]
+    #         # variance = torch.zeros(bs, device=self.device)
+    #         # variance[indices] = variance_temp
+    #         scores_list.append(variance)
+    #     variance = torch.stack(scores_list, dim=1) # [bs, nt]
+    #     assert (variance[:,-1]==0).all()
+    #     assert variance.shape == (bs, nt)
+
+    #     scores = variance[:,0].unsqueeze(1) - variance # [bs, nt]
+    #     # scores[torch.arange(nt)[None,:] < starting_time[:,None]] = 0
+    #     # assert scores[0, starting_time[0]] == 0
+    #     return scores
+
+
     @torch.no_grad()
     def _compute_mutual_self(self, Y, starting_time):
         nt = self.nt

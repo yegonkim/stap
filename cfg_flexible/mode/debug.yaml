@@ -1,0 +1,9 @@
+# @package _global_
+wandb:
+  use: False
+
+train:
+  epochs: 1
+
+testsize: 100
+

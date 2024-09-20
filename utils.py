@@ -52,7 +52,7 @@ class trajectory_model(torch.nn.Module):
         for _ in range(self.unrolling):
             x = self.model(x)
             trajectory.append(x)
-        return torch.cat(trajectory, dim=1) # [cfg.train.batch_size, unrolling, nx]
+        return torch.stack(trajectory, dim=1) # [cfg.train.batch_size, unrolling, 1, nx]
     
 class split_model(torch.nn.Module):
     def __init__(self, model, batch_size):
@@ -70,3 +70,17 @@ class ensemble_mean_model(torch.nn.Module):
     def forward(self, x):
         y = [model(x) for model in self.ensemble]
         return torch.stack(y).mean(dim=0)
+    
+class normalized_model(torch.nn.Module):
+    def __init__(self, model, mean_x, std_x, mean_y, std_y):
+        super().__init__()
+        self.model = model
+        device = next(model.parameters()).device
+        self.mean_x = mean_x.to(device)
+        self.std_x = std_x.to(device)
+        self.mean_y = mean_y.to(device)
+        self.std_y = std_y.to(device)
+    def forward(self, x):
+        return self.model((x - self.mean_x) / self.std_x) * self.std_y + self.mean_y
+    
+    

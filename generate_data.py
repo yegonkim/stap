@@ -12,8 +12,11 @@ import time
 from typing import Tuple
 from copy import copy
 from datetime import datetime
-from PDEs import PDE, KdV, KS, nKdV, cKdV, Heat
+from PDEs import PDE, KdV, KS, nKdV, cKdV, Heat, GrayScott
 from torchdiffeq import odeint
+
+import hydra
+from omegaconf import DictConfig, OmegaConf
 
 
 def check_files(pde: PDE, modes: dict) -> None:
@@ -25,11 +28,9 @@ def check_files(pde: PDE, modes: dict) -> None:
     Returns:
             None
     """
-    for mode, replace, num_samples, suffix in modes:
+    for mode, replace, num_samples in modes:
         save_name = "data/" + "_".join([str(pde), mode])
         save_name = save_name + "_" + str(num_samples)
-        if suffix:
-            save_name = save_name + "_" + suffix
         if (replace == True):
             if os.path.exists(f'{save_name}.h5'):
                 os.remove(f'{save_name}.h5')
@@ -86,28 +87,27 @@ def params(pde: PDE, batch_size: int, device: torch.cuda.device="cpu") -> Tuple[
     return A, phi, l
 
 
-def inv_cole_hopf(psi0: np.ndarray, scale: float = 10.) -> np.ndarray:
-    """
-    Inverse Cole-Hopf transformation to obtain Heat equation out of initial conditions of Burgers' equation.
-    Args:
-        psi0 (np.ndarray): Burgers' equation (at arbitrary timestep) which gets transformed into Heat equation
-        scale (float): scaling factor for transformation
-    Returns:
-        np.ndarray: transformed Heat equation
-    """
-    psi0 = psi0 - np.amin(psi0)
-    psi0 = scale * 2 * ((psi0 / np.amax(psi0)) - 0.5)
-    psi0 = np.exp(psi0)
-    return psi0
+# def inv_cole_hopf(psi0: np.ndarray, scale: float = 10.) -> np.ndarray:
+#     """
+#     Inverse Cole-Hopf transformation to obtain Heat equation out of initial conditions of Burgers' equation.
+#     Args:
+#         psi0 (np.ndarray): Burgers' equation (at arbitrary timestep) which gets transformed into Heat equation
+#         scale (float): scaling factor for transformation
+#     Returns:
+#         np.ndarray: transformed Heat equation
+#     """
+#     psi0 = psi0 - np.amin(psi0)
+#     psi0 = scale * 2 * ((psi0 / np.amax(psi0)) - 0.5)
+#     psi0 = np.exp(psi0)
+#     return psi0
 
 @torch.no_grad()
 def generate_trajectories(pde: PDE,
                           mode: str,
                           num_samples: int,
-                          suffix: str,
                           batch_size: int,
                           device: torch.cuda.device="cpu",
-                          args=None,
+                          cfg=None,
                           ) -> None:
     """
     Generate data trajectories for KdV, KS equation on periodic spatial domains.
@@ -133,15 +133,14 @@ def generate_trajectories(pde: PDE,
 
     save_name = "data/" + "_".join([pde_string, mode])
     save_name = save_name + "_" + str(num_samples)
-    if suffix:
-        save_name = save_name + '_' + suffix
     h5f = h5py.File("".join([save_name, '.h5']), 'a')
     dataset = h5f.create_group(mode)
 
     h5f_u = {}
 
     # Tolerance of the solver
-    tol = 1e-9
+    atol = cfg.generate_data.atol
+    rtol = cfg.generate_data.rtol
     
     
     nt = pde.grid_size[0]
@@ -149,7 +148,7 @@ def generate_trajectories(pde: PDE,
     
     # The field u, the coordinations (xcoord, tcoord) and dx, dt are saved
     # Only nt_effective time steps of each trajectories are saved
-    h5f_u = dataset.create_dataset(f'pde_{pde.nt_effective}-{nx}', (num_samples, pde.nt_effective, nx), dtype=float)
+    h5f_u = dataset.create_dataset(f'pde', (num_samples, pde.nt_effective, 1, nx), dtype=float)
         
     for batch_idx in range(num_batches):
         
@@ -190,9 +189,9 @@ def generate_trajectories(pde: PDE,
                 solved_trajectory = odeint(func=spectral_method,
                                             t=t,
                                             y0=u0,
-                                            method=args.solver,
-                                            atol=tol,
-                                            rtol=tol)
+                                            method=cfg.generate_data.solver,
+                                            atol=atol,
+                                            rtol=rtol)
                 break
             except AssertionError:
                 print(f'An error occured - possibly an underflow. re-running {trial}/5')
@@ -205,7 +204,7 @@ def generate_trajectories(pde: PDE,
         #     sol = torch.tensor(cole_hopf(sol.cpu().numpy()))
             
         sol = sol.cpu()
-        h5f_u[batch_idx * batch_size:batch_idx * batch_size+n_data, :, :] = sol
+        h5f_u[batch_idx * batch_size:batch_idx * batch_size+n_data, :, 0, :] = sol
         
         print("Solved indices: {:d} : {:d}".format(batch_idx * batch_size, (batch_idx + 1) * batch_size - 1))
         print("Solved batches: {:d} of {:d}".format(batch_idx + 1, num_batches))
@@ -233,7 +232,7 @@ def generate_data(experiment: str,
                   batch_size: int=1,
                   device: torch.cuda.device="cpu",
                   nu: float=0.01,
-                  args=None) -> None:
+                  cfg=None) -> None:
     """
     Generate data for KdV, KS equation on periodic spatial domains.
     Args:
@@ -254,10 +253,10 @@ def generate_data(experiment: str,
     print(f'Generating data')
     dateTimeObj = datetime.now()
     timestring = f'{dateTimeObj.date().month}{dateTimeObj.date().day}{dateTimeObj.time().hour}{dateTimeObj.time().minute}'
-    if args.log:
-        logfile = f'data/log/{experiment}_time{timestring}.csv'
-        print(f'Writing to log file {logfile}')
-        sys.stdout = open(logfile, 'w')
+    # if args.log:
+    #     logfile = f'data/log/{experiment}_time{timestring}.csv'
+    #     print(f'Writing to log file {logfile}')
+    #     sys.stdout = open(logfile, 'w')
 
     # Create instances of PDE
     if experiment == 'KdV':
@@ -282,6 +281,13 @@ def generate_data(experiment: str,
                     nu=nu,
                     L=L,
                     device=device)
+    # elif experiment == 'Burgers':
+    #     pde = Burgers(tmin=starting_time,
+    #              tmax=end_time,
+    #              grid_size=(nt, nx),
+    #              nt_effective=nt_effective,
+    #              nu=nu,
+    #              device=device)
         
 
     # elif experiment == 'Burgers':
@@ -307,86 +313,63 @@ def generate_data(experiment: str,
                   nt_effective=nt_effective,
                   L=L,
                   device=device)
+    elif experiment == 'GrayScott':
+        pde = GrayScott(tmin=starting_time,
+                  tmax=end_time,
+                  grid_size=(nt, nx, nx),
+                  nt_effective=nt_effective,
+                  L=L,
+                  device=device)
     else:
         raise Exception("Wrong experiment")
 
     # Check if train, valid and test files already exist and replace if wanted
-    files = {("train", num_samples_train > 0, num_samples_train, args.suffix),
-             ("valid", num_samples_valid > 0, num_samples_valid, args.suffix),
-             ("test", num_samples_test > 0, num_samples_test, args.suffix)}
+    files = {("train", num_samples_train > 0, num_samples_train),
+             ("valid", num_samples_valid > 0, num_samples_valid),
+             ("test", num_samples_test > 0, num_samples_test)}
     check_files(pde, files)
     
     # save pde object
-    with open(os.path.join('data',f'{str(pde)}_{args.suffix}.pkl'),'wb') as f:
-        pickle.dump(pde,f)
+    # with open(os.path.join('data',f'{str(pde)}.pkl'),'wb') as f:
+    #     pickle.dump(pde,f)
 
     # Obtain trajectories for different modes
-    for mode, _, num_samples, suffix in files:
+    for mode, _, num_samples in files:
         if num_samples > 0:
             generate_trajectories(pde=pde,
                                 mode=mode,
                                 num_samples=num_samples,
-                                suffix=suffix,
                                 batch_size=batch_size,
                                 device=device,
-                                args=args,)
+                                cfg=cfg)
 
 
-def main(args: argparse) -> None:
-    """
-    Main method for data generation.
-    """
+@hydra.main(version_base=None, config_path="cfg_flexible", config_name="config.yaml")
+def main(cfg: OmegaConf):
+    print("Input arguments:")
+    print(OmegaConf.to_yaml(cfg))
+
     check_directory()
-    generate_data(experiment=args.experiment,
-                  starting_time=0.0,
-                  end_time=args.end_time,
-                  L=args.L,
-                  nt=args.nt,
-                  nt_effective=args.nt_effective,
-                  nx=args.nx,
-                  num_samples_train=args.train_samples,
-                  num_samples_valid=args.valid_samples,
-                  num_samples_test=args.test_samples,
-                  batch_size=args.batch_size,
-                  device=args.device,
-                  nu=args.nu,
-                  args=args,)
+    generate_data(experiment=cfg.equation,
+                    starting_time=cfg.generate_data.starting_time,
+                    end_time=cfg.generate_data.end_time,
+                    L=cfg.generate_data.L,
+                    nt=cfg.generate_data.nt,
+                    nt_effective=cfg.generate_data.nt_effective,
+                    nx=cfg.generate_data.nx,
+                    num_samples_train=cfg.datasize,
+                    num_samples_valid=0,
+                    num_samples_test=cfg.testsize,
+                    batch_size=cfg.generate_data.batch_size,
+                    device=cfg.device,
+                    nu=cfg.generate_data.nu,
+                    cfg=cfg,)
+
+
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Generating PDE data')
-    parser.add_argument('--experiment', type=str, default='KdV',
-                        help='Experiment for which data should create for: [KdV, KS, Burgers, nKdV, cKdV]')
-    parser.add_argument('--device', type=str, default='cpu',
-                        help='Used device')
-    parser.add_argument('--end_time', type=float, default=100.,
-                        help='How long do we want to simulate')
-    parser.add_argument('--nt', type=int, default=250,
-                        help='Time steps used for solving')
-    parser.add_argument('--nt_effective', type=int, default=140,
-                        help='Solved timesteps used for training')
-    parser.add_argument('--nx', type=int, default=256,
-                        help='Spatial resolution')
-    parser.add_argument('--L', type=float, default=128.,
-                        help='Length for which we want to solve the PDE')
-    parser.add_argument('--train_samples', type=int, default=0,
-                        help='Samples in the training dataset')
-    parser.add_argument('--valid_samples', type=int, default=0,
-                        help='Samples in the validation dataset')
-    parser.add_argument('--test_samples', type=int, default=0,
-                        help='Samples in the test dataset')
-    parser.add_argument('--batch_size', type=int, default=1,
-                        help='Batch size used for creating training, val, and test dataset')
-    parser.add_argument('--suffix', type=str, default='',
-                        help='Suffix for additional datasets')
-    parser.add_argument('--log', type=eval, default=False,
-                        help='pip the output to log file')
-    parser.add_argument('--solver', type=str, default='dopri5',
-                        help='ode solver')
-    parser.add_argument('--nu', type=float, default=0.01,
-                        help='nu in burgers')
+    main()
 
-    args = parser.parse_args()
-    main(args)
 
 def _get_pde_object(cfg):
     experiment = cfg.equation
@@ -419,6 +402,13 @@ def _get_pde_object(cfg):
                    nt_effective=nt_effective,
                    L=L,
                    device=device)
+    # elif experiment == 'Burgers':
+    #     pde = Burgers(tmin=starting_time,
+    #              tmax=end_time,
+    #              grid_size=(nt, nx),
+    #              nt_effective=nt_effective,
+    #              nu=cfg.generate_data.nu,
+    #              device=device)
 
     # elif experiment == 'Burgers':
     #     # Heat equation is generated; afterwards trajectories are transformed via Cole-Hopf transformation.
@@ -443,13 +433,28 @@ def _get_pde_object(cfg):
                   nt_effective=nt_effective,
                   L=L,
                   device=device)
+    elif experiment == 'GrayScott':
+        pde = GrayScott(tmin=starting_time,
+                  tmax=end_time,
+                  grid_size=(nt, nx, nx),
+                  nt_effective=nt_effective,
+                  L=L,
+                  device=device)
     else:
         raise Exception("Wrong experiment")
 
     return pde
 
+
+
 @torch.no_grad()
-def generate_timestep(u0, cfg, t0=0, timesteps=1, dt=None):
+def evolve(u0, cfg, t0=0, timesteps=1, dt=None):
+    if cfg.equation in ["KdV", "KS", "Heat", "nKdV", "cKdV", "GrayScott"]:
+        return _evolve_ps(u0, cfg, t0, timesteps, dt)
+
+
+def _evolve_ps(u0, cfg, t0=0, timesteps=1, dt=None):
+    # print(u0.max(), u0.min(), u0.shape)
     device = cfg.device
     batch_size = cfg.generate_data.batch_size
 
@@ -457,12 +462,13 @@ def generate_timestep(u0, cfg, t0=0, timesteps=1, dt=None):
 
     pde_string = str(pde)
     # Tolerance of the solver
-    tol = 1e-9
+    atol = cfg.generate_data.atol
+    rtol = cfg.generate_data.rtol
     
     nt = cfg.generate_data.nt
     end_time = cfg.generate_data.end_time
     if dt is None:
-        dt = end_time / (nt-1)
+        dt = end_time / (nt-1) * (130/(cfg.nt-1))
     nx = pde.grid_size[1]
     
     # The field u, the coordinations (xcoord, tcoord) and dx, dt are saved
@@ -495,8 +501,8 @@ def generate_timestep(u0, cfg, t0=0, timesteps=1, dt=None):
                                         t=t,
                                         y0=u,
                                         method=cfg.generate_data.solver,
-                                        atol=tol,
-                                        rtol=tol)
+                                        atol=atol,
+                                        rtol=rtol)
             sol = solved_trajectory.permute(1,0,2) # (n_data, nt, nx)
             sol = sol[:, 1:]
 
@@ -507,28 +513,29 @@ def generate_timestep(u0, cfg, t0=0, timesteps=1, dt=None):
             raise Exception('An error occured - possibly an underflow.')
         solution.append(sol)
     solution = torch.cat(solution, dim=0) # (n_data, nt, nx)
+    solution = solution.unsqueeze(2) # (n_data, nt, 1, nx)
 
-    return solution
+    return solution # (n_data, nt, 1, nx)
     
     
-def generate_initial_conditions(num_initial_conditions, cfg):
-    pde = _get_pde_object(cfg)
-    T = pde.tmax
-    L = pde.L
-    batch_size = cfg.generate_data.batch_size
-    device = cfg.device
-    nx = pde.grid_size[1]
+# def generate_ic(num_initial_conditions, cfg):
+#     pde = _get_pde_object(cfg)
+#     T = pde.tmax
+#     L = pde.L
+#     batch_size = cfg.generate_data.batch_size
+#     device = cfg.device
+#     nx = pde.grid_size[1]
 
-    u0_list = []
-    for j in range(num_initial_conditions):
-        x = np.linspace(0, (1 - 1.0 / nx) * L, nx)
-        # Parameters for initial conditions
-        A, omega, l = params(pde, batch_size, device=device)
+#     u0_list = []
+#     for j in range(num_initial_conditions):
+#         x = np.linspace(0, (1 - 1.0 / nx) * L, nx)
+#         # Parameters for initial conditions
+#         A, omega, l = params(pde, batch_size, device=device)
 
-        # Initial condition of the equation at end
-        u0 = initial_conditions(A, omega, l, L)(x[:, None])
+#         # Initial condition of the equation at end
+#         u0 = initial_conditions(A, omega, l, L)(x[:, None])
 
-        u0_list.append(u0)
-    u0 = torch.tensor(np.stack(u0_list,axis=0)).to(device)
+#         u0_list.append(u0)
+#     u0 = torch.tensor(np.stack(u0_list,axis=0)).to(device)
 
-    return u0
+#     return u0

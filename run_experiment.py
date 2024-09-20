@@ -28,7 +28,7 @@ batch_size = 32
 
 def experiment_direct(datasize=1024, device='cpu'):
 
-    model = FNO(n_modes=(256, ), hidden_channels=64,
+    model = FNO(n_modes=cfg.model.n_modes, hidden_channels=64,
                     in_channels=1, out_channels=1)
 
     model = model.to(device)
@@ -83,7 +83,7 @@ def experiment_multi(datasize=1024, device='cpu', **cfg):
     timestep = (Traj_dataset.traj_train.shape[1] - 1) // (nt - 1) # 10
     assert timestep == 10
 
-    model = FNO(n_modes=(256, ), hidden_channels=64,
+    model = FNO(n_modes=cfg.model.n_modes, hidden_channels=64,
                     in_channels=1, out_channels=nt)
 
     model = model.to(device)
@@ -138,7 +138,7 @@ def experiment_ar(datasize=1024, device='cpu', **cfg):
     unrolling = cfg.get('unrolling', 1)
     nt = cfg.get('nt', 14)
 
-    model = FNO(n_modes=(256, ), hidden_channels=64,
+    model = FNO(n_modes=cfg.model.n_modes, hidden_channels=64,
                     in_channels=1, out_channels=1)
 
     model = model.to(device)

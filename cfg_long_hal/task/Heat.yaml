@@ -7,12 +7,19 @@ train:
 wandb:
   project: Heat
 
+datasize: 4096
+
 dataset:
   train_path: data_large/Heat_train_10000_default.h5
   test_path: data_large/Heat_test_10000_default.h5
+
+model:
+  n_modes: [16]
 
 generate_data:
   L: 6.28
   nt: 180
   end_time: 18.0
   nu: 0.01
+  atol: 1e-6
+  rtol: 1e-8

@@ -1,0 +1,56 @@
+# @package _global_
+equation: 
+nt: 14
+
+
+initial_datasize: 128
+exponential_data: False
+exponential_rate: 2.0
+batch_acquire: 32
+num_acquire: 4 # 128 + 32*4 = 256
+
+ensemble_size: 2
+num_random_pool: 1000
+std: 1e-2
+
+# scenario: fixed # fixed, flexible
+initial_selection_method: random # random, variance, stochastic, lcmd
+post_selection_method: all # initial_ vs flexible_, ...
+mean_field: False
+# post_batch_size: 32
+
+# optimization_method: greedy # greedy, individual
+# flexible_selection_method: random # variance, stochastic, lcmd
+# stochastic_temperature: 1.0
+# fill_budget: False
+
+
+generate_data:
+  L: 
+  nt: 
+  nx: 256
+  end_time: 
+  nt_effective: 140
+  solver: dopri5
+  batch_size: 4096
+  nu: 
+  starting_time: 0
+
+
+
+comment: 
+
+seed: 1
+device: cuda
+eval_batch_size: 256
+
+train:
+  unrolling: 0
+  epochs: 100
+  lr: 0.001
+  batch_size: 32
+
+wandb:
+  use: True
+  project: 
+  entity: kaist_yegonkim

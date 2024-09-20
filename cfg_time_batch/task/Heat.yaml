@@ -7,6 +7,9 @@ train:
 wandb:
   project: Heat
 
+model:
+  n_modes: [16]
+
 dataset:
   train_path: data_large/Heat_train_10000_default.h5
   test_path: data_large/Heat_test_10000_default.h5

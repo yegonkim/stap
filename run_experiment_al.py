@@ -98,12 +98,12 @@ def run_experiment(cfg):
     X_pool = X[pool_idxs]
 
     if cfg.fix_initial_weights:
-        initial_ensemble = [FNO(n_modes=(256, ), hidden_channels=64, in_channels=1, out_channels=1) for _ in range(ensemble_size)]
+        initial_ensemble = [FNO(n_modes=cfg.model.n_modes, hidden_channels=64, in_channels=1, out_channels=1) for _ in range(ensemble_size)]
 
     if cfg.fix_initial_weights:
         ensemble = [train(copy.deepcopy(model), X_train, Y_train, acquire_step=0) for model in initial_ensemble]
     else:
-        ensemble = [FNO(n_modes=(256, ), hidden_channels=64, in_channels=1, out_channels=1) for _ in range(ensemble_size)]
+        ensemble = [FNO(n_modes=cfg.model.n_modes, hidden_channels=64, in_channels=1, out_channels=1) for _ in range(ensemble_size)]
         ensemble = [train(model, X_train, Y_train, acquire_step=0) for model in ensemble]
 
     results = {'datasize': [], 'rel_l2': [], 'rel_l2_trajectory': []}
@@ -139,7 +139,7 @@ def run_experiment(cfg):
         if cfg.fix_initial_weights:
             ensemble = [train(copy.deepcopy(model), X_train, Y_train, acquire_step=0) for model in initial_ensemble]
         else:
-            ensemble = [FNO(n_modes=(256, ), hidden_channels=64, in_channels=1, out_channels=1) for _ in range(ensemble_size)]
+            ensemble = [FNO(n_modes=cfg.model.n_modes, hidden_channels=64, in_channels=1, out_channels=1) for _ in range(ensemble_size)]
             ensemble = [train(model, X_train, Y_train, acquire_step=0) for model in ensemble]
 
         results['datasize'].append(train_idxs.shape[0])

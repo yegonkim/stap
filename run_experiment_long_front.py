@@ -42,7 +42,7 @@ def run_experiment(cfg):
 
         acquire_step = kwargs.get('acquire_step', 0)
 
-        model = FNO(n_modes=(256, ), hidden_channels=64,
+        model = FNO(n_modes=cfg.model.n_modes, hidden_channels=64,
                     in_channels=1, out_channels=1)
 
         model = model.to(device)

@@ -1,0 +1,27 @@
+# @package _global_
+defaults:
+  - default_conf
+equation: KS
+train:
+  unrolling: 0
+wandb:
+  project: KS
+
+
+datasize: 10000
+testsize: 1000
+
+model:
+  n_modes: [128]
+
+dataset:
+  train_path: data/KS_train_10000.h5
+  test_path: data/KS_test_1000.h5
+
+
+generate_data:
+  L: 64.0
+  nt: 500
+  end_time: 100.0
+  atol: 1e-6
+  rtol: 1e-8

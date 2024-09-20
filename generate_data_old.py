@@ -495,7 +495,7 @@ def generate_timestep(u0, t0, cfg):
     return solution
     
     
-def generate_initial_conditions(num_initial_conditions, cfg):
+def generate_ic(num_initial_conditions, cfg):
     pde = _get_pde_object(cfg)
     T = pde.tmax
     L = pde.L

@@ -7,11 +7,18 @@ train:
 wandb:
   project: KS
 
+datasize: 768
+
 dataset:
   train_path: data_small/KS_train_1024_default.h5
   test_path: data_small/KS_test_4096_default.h5
+
+model:
+  n_modes: [128]
 
 generate_data:
   L: 64.0
   nt: 500
   end_time: 100.0
+  atol: 1e-6
+  rtol: 1e-8

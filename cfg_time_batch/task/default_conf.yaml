@@ -3,12 +3,16 @@ equation:
 nt: 14
 
 datasize: 1000
-testsize: 1000
+testsize: 10000
 # testsize: 1000
 # exponential_data: False
+
 initial_datasize: 128
+exponential_data: False
 batch_acquire: 32
+exponential_rate: 2.0
 num_acquire: 4 # 128 + 32*4 = 256
+
 ensemble_size: 5
 num_random_pool: 1000
 std: 1e-2
@@ -18,6 +22,9 @@ initial_selection_method: random # random, variance, stochastic, lcmd
 post_selection_method: all # all, variance_prior, variance_direct
 optimization_method: greedy # greedy, individual
 flexible_selection_method: random # variance, stochastic, lcmd
+stochastic_temperature: 1.0
+# fill_budget: False
+
 
 comment: 
 

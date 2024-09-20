@@ -83,7 +83,7 @@ class LpLoss(object):
             X, Y = X.to(self.device), Y.to(self.device)
             X, Y = X.flatten(start_dim=1), Y.flatten(start_dim=1)
             mse = torch.norm(X - Y, self.p, 1).pow(2)
-            y_norms = torch.norm(Y, self.p, 1).pow(2)
+            # y_norms = torch.norm(Y, self.p, 1).pow(2)
             all_mse.append(mse)
         all_mse = torch.cat(all_mse)
 

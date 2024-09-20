@@ -7,6 +7,9 @@ train:
 wandb:
   project: KdV
 
+model:
+  n_modes: [256]
+
 dataset:
   train_path: data_large/KdV_train_100000_default.h5
   test_path: data_large/KdV_test_100000_default.h5

@@ -9,12 +9,15 @@ import argparse
 import time
 
 from eval_utils import compute_metrics
-from utils import set_seed, flatten_configdict, trajectory_model, direct_model, split_model
-from acquisition.acquirers_batched import Acquirer_batched
+from utils import set_seed, flatten_configdict, trajectory_model, direct_model, split_model, normalized_model
+from acquisition.acquirer_initial import Acquirer_initial
 
 from omegaconf import OmegaConf
 import hydra
 import wandb
+
+import os
+os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
 
 class Traj_dataset:
     traj_train = None
@@ -47,10 +50,10 @@ def run_experiment(cfg):
 
         acquire_step = kwargs.get('acquire_step', 0)
 
-        model = FNO(n_modes=(256, ), hidden_channels=64,
+        model = FNO(n_modes=tuple(cfg.model.n_modes), hidden_channels=64,
                     in_channels=1, out_channels=1)
-
         model = model.to(device)
+        model = normalized_model(model, Traj_dataset.mean, Traj_dataset.std, Traj_dataset.mean, Traj_dataset.std)
 
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs)
@@ -90,8 +93,9 @@ def run_experiment(cfg):
             # wandb.log({f'train/loss_{acquire_step}': total_loss})
         return model
 
-    
-    def test_trajectory(model):
+    # test with teacher forcing
+    @torch.no_grad()
+    def test_tf(ensemble):
         X_test = Traj_dataset.traj_test[:,0:(nt-1)*timestep:timestep] # [datasize, nt-1, nx]
         Y_test = Traj_dataset.traj_test[:,timestep:nt*timestep:timestep] # [datasize, nt-1, nx]
         X_test = X_test.flatten(0, 1).unsqueeze(1) # [datasize*(nt-1), 1, nx]
@@ -102,102 +106,143 @@ def run_experiment(cfg):
         testset = torch.utils.data.TensorDataset(X_test, Y_test)
         testloader = torch.utils.data.DataLoader(testset, batch_size=cfg.eval_batch_size, shuffle=False)
 
-        model.eval()
-    
-        Y_test_pred = []
-        with torch.no_grad():
-            for x, y in testloader:
-                x, y = x.to(device), y.to(device)
-                y_pred = model(x)
-                # print(y_pred.shape, y.shape)
-                assert y_pred.shape == y.shape
-                Y_test_pred.append(y_pred.cpu())
-            Y_test_pred = torch.cat(Y_test_pred, dim=0)
+        preds = []
+        for model in ensemble:
+            model.eval()
         
-        metrics = compute_metrics(Y_test, Y_test_pred, d=2, device=device)
+            Y_test_pred = []
+            with torch.no_grad():
+                for x, y in testloader:
+                    x, y = x.to(device), y.to(device)
+                    y_pred = model(x)
+                    # print(y_pred.shape, y.shape)
+                    assert y_pred.shape == y.shape
+                    Y_test_pred.append(y_pred.cpu())
+                Y_test_pred = torch.cat(Y_test_pred, dim=0)
+            preds.append(Y_test_pred)
+        preds = torch.stack(preds, dim=0) # [ensemble_size, datasize*(nt-1), 1, nx]
+        
+        mean_pred = preds.mean(dim=0) # [datasize*(nt-1), 1, nx]
+        metrics = compute_metrics(Y_test, mean_pred, d=2, device=device) # (l2, rel_l2, mse)
+        metrics = torch.stack(metrics,dim=0).mean(dim=1) # [3]
+        metrics[2] = torch.sqrt(metrics[2]) # rmse
+        metrics_ensemble = metrics
 
-        return metrics
+        metrics_individual = []
+        for i in range(ensemble_size):
+            metrics_i = compute_metrics(Y_test, preds[i], d=2, device=device)
+            metrics_i = torch.stack(metrics_i,dim=0).mean(dim=1) # [3]
+            metrics_i[2] = torch.sqrt(metrics_i[2])
+            metrics_individual.append(metrics_i)
+        metrics_individual = torch.stack(metrics_individual, dim=0) # [ensemble_size, 3]
+        metrics_individual = metrics_individual.mean(dim=0) # [3]
 
-    def test_per_trajectory(model):
+        return metrics_individual, metrics_ensemble
+
+    # test: l2, rel_l2, rmse
+    @torch.no_grad()
+    def test(ensemble):
         X_test = Traj_dataset.traj_test[:,0].unsqueeze(1)
         Y_test = Traj_dataset.traj_test[:,timestep::timestep]
 
         testset = torch.utils.data.TensorDataset(X_test, Y_test)
         testloader = torch.utils.data.DataLoader(testset, batch_size=cfg.eval_batch_size, shuffle=False)
-
-        model.eval()
-    
-        Y_test_pred = []
-        with torch.no_grad():
-            for x, y in testloader:
-                x, y = x.to(device), y.to(device)
-                y_pred = model(x)
-                # print(y_pred.shape, y.shape)
-                assert y_pred.shape == y.shape
-                Y_test_pred.append(y_pred.cpu())
-            Y_test_pred = torch.cat(Y_test_pred, dim=0)
         
-        metrics = compute_metrics(Y_test, Y_test_pred, d=2, device=device)
+        preds = []
+        for model in ensemble:
+            model = trajectory_model(model, nt-1)
+            model.eval()
+        
+            Y_test_pred = []
+            with torch.no_grad():
+                for x, y in testloader:
+                    x, y = x.to(device), y.to(device)
+                    y_pred = model(x)
+                    # print(y_pred.shape, y.shape)
+                    assert y_pred.shape == y.shape
+                    Y_test_pred.append(y_pred.cpu())
+                Y_test_pred = torch.cat(Y_test_pred, dim=0)
+            preds.append(Y_test_pred)
+        preds = torch.stack(preds, dim=0) # [ensemble_size, datasize, nt-1, nx]
+        
+        mean_pred = preds.mean(dim=0) # [datasize*(nt-1), 1, nx]
+        metrics = compute_metrics(Y_test, mean_pred, d=2, device=device) # (l2, rel_l2, mse)
+        metrics = torch.stack(metrics,dim=0).mean(dim=1) # [3]
+        metrics[2] = torch.sqrt(metrics[2]) # rmse
+        metrics_ensemble = metrics
 
-        return metrics
+        metrics_individual = []
+        for i in range(ensemble_size):
+            metrics_i = compute_metrics(Y_test, preds[i], d=2, device=device)
+            metrics_i = torch.stack(metrics_i,dim=0).mean(dim=1) # [3]
+            metrics_i[2] = torch.sqrt(metrics_i[2])
+            metrics_individual.append(metrics_i)
+        metrics_individual = torch.stack(metrics_individual, dim=0) # [ensemble_size, 3]
+        metrics_individual = metrics_individual.mean(dim=0) # [3]
 
-    def evaluate(results):
-        results['datasize'].append((train_nts-1).sum().item())
-        metrics_list = torch.stack([torch.stack(test_per_trajectory(trajectory_model(model, nt-1))) for model in ensemble]) # [ensemble_size, 3, datasize]
-        results['l2_trajectory'].append(metrics_list[:, 0, :].mean().item())
-        results['rel_l2_trajectory'].append(metrics_list[:, 1, :].mean().item())
-        results['mse_trajectory'].append(metrics_list[:, 2, :].mean().item())
-        metrics_list = torch.stack([torch.stack(test_trajectory(model)) for model in ensemble]) # [ensemble_size, 3, datasize]
-        results['l2'].append(metrics_list[:, 0, :].mean().item())
-        results['rel_l2'].append(metrics_list[:, 1, :].mean().item())
-        results['mse'].append(metrics_list[:, 2, :].mean().item())
-        print(f'Datasize: {results["datasize"][-1]}, L2: {results["l2"][-1]}, Rel_l2: {results["rel_l2"][-1]}, MSE: {results["mse"][-1]}, L2_trajectory: {results["l2_trajectory"][-1]}, Rel_l2_trajectory: {results["rel_l2_trajectory"][-1]}, MSE_trajectory: {results["mse_trajectory"][-1]}')
-        wandb.log({'datasize': results['datasize'][-1], f'l2': results['l2'][-1], f'rel_l2': results['rel_l2'][-1], f'mse': results['mse'][-1],f'l2_trajectory': results['l2_trajectory'][-1], f'rel_l2_trajectory': results['rel_l2_trajectory'][-1], f'mse_trajectory': results['mse_trajectory'][-1]})
-    
+        return metrics_individual, metrics_ensemble
+
+    def evaluate(acquirer):
+        results={}
+        results['datasize']=((acquirer.train_nts-1).sum().item())
+        metrics, metrics_ensemble = test(acquirer.ensemble)
+        results['test/L2']=(metrics[0].item())
+        results['test/Relative_L2']=(metrics[1].item())
+        results['test/RMSE']=(metrics[2].item())
+        results['test_ensemble/L2']=(metrics_ensemble[0].item())
+        results['test_ensemble/Relative_L2']=(metrics_ensemble[1].item())
+        results['test_ensemble/RMSE']=(metrics_ensemble[2].item())
+        metrics, metrics_ensemble = test_tf(acquirer.ensemble)
+        results['test_tf/L2']=(metrics[0].item())
+        results['test_tf/Relative_L2']=(metrics[1].item())
+        results['test_tf/RMSE']=(metrics[2].item())
+        results['test_tf_ensemble/L2']=(metrics_ensemble[0].item())
+        results['test_tf_ensemble/Relative_L2']=(metrics_ensemble[1].item())
+        results['test_tf_ensemble/RMSE']=(metrics_ensemble[2].item())
+        print(results)
+        wandb.log(results)
 
     timestep = (Traj_dataset.traj_train.shape[1] - 1) // (nt - 1) # 10
-    # assert timestep == 10 # hardcoded for now (130/ (14-1) = 10)
 
     X = Traj_dataset.traj_train[:,0].unsqueeze(1)
     Y = Traj_dataset.traj_train[:,0::timestep]
 
     train_nts = torch.ones(X.shape[0], device=device, dtype=torch.int64)
-    # values are between 1 and 14, inclusive
-    # 1 means only initial data, 14 means all data
-
     train_nts[:initial_datasize] = nt
 
     ensemble = [train(Y, train_nts, acquire_step=0) for _ in tqdm(range(ensemble_size))]
 
-    acquirer = Acquirer_batched(ensemble, Y, train_nts, device=device, eval_batch_size=cfg.eval_batch_size,
+    acquirer = Acquirer_initial(ensemble, Y, train_nts, device=device, eval_batch_size=cfg.eval_batch_size,
                                 scenario=cfg.scenario, initial_selection_method=cfg.initial_selection_method,
                                 post_selection_method=cfg.post_selection_method, batch_acquire=cfg.batch_acquire,
                                 flexible_selection_method=cfg.flexible_selection_method,
                                 optimization_method=cfg.optimization_method,
-                                num_random_pool=cfg.num_random_pool, std=cfg.std)
-    train_nts = acquirer.train_nts
+                                num_random_pool=cfg.num_random_pool, std=cfg.std,
+                                stochastic_temperature=cfg.stochastic_temperature)
     
-    results = {'datasize': [], 'l2': [], 'mse': [], 'rel_l2': [], 'l2_trajectory': [], 'mse_trajectory': [], 'rel_l2_trajectory': []}
-    evaluate(results)
+    evaluate(acquirer)
 
     for acquire_step in range(1, num_acquire+1):
-        acquirer.select()
-        ensemble = [train(Y, acquirer.train_nts, acquire_step=acquire_step) for _ in tqdm(range(ensemble_size))]
-        acquirer.ensemble = ensemble
-        train_nts = acquirer.train_nts
-        evaluate(results)
+        if cfg.exponential_data:
+            acquirer.select(int(initial_datasize * cfg.exponential_rate ** acquire_step) - int(initial_datasize * cfg.exponential_rate ** (acquire_step-1)))
+        else:
+            acquirer.select(cfg.batch_acquire)
+        acquirer.ensemble = [train(Y, acquirer.train_nts, acquire_step=acquire_step) for _ in tqdm(range(ensemble_size))]
+        evaluate(acquirer)
 
-    return results
+    # save train_nts to wandb
+    train_nts = acquirer.train_nts.cpu().numpy()
+    run_dir = wandb.run.dir
+    np.save(os.path.join(run_dir, 'train_nts.npy'), train_nts)
+    artifact = wandb.Artifact(name = "results", type = "dataset")
+    artifact.add_file(os.path.join(run_dir, 'train_nts.npy'))
+    wandb.log_artifact(artifact)
 
 def mean_std_normalize():
     assert Traj_dataset.traj_train is not None
     mean = Traj_dataset.traj_train[:32].mean()
     std = Traj_dataset.traj_train[:32].std()
     print(f'Mean: {mean}, Std: {std}')
-    Traj_dataset.traj_train = (Traj_dataset.traj_train - mean) / std
-    if Traj_dataset.traj_valid is not None:
-        Traj_dataset.traj_valid = (Traj_dataset.traj_valid - mean) / std
-    Traj_dataset.traj_test = (Traj_dataset.traj_test - mean) / std
     Traj_dataset.mean = mean
     Traj_dataset.std = std
 
@@ -208,10 +253,6 @@ def max_min_normalize():
     mean = (max_val + min_val) / 2
     std = (max_val - min_val) / 2
     print(f'Max: {max_val}, Min: {min_val}')
-    Traj_dataset.traj_train = (Traj_dataset.traj_train - mean) / std
-    if Traj_dataset.traj_valid is not None:
-        Traj_dataset.traj_valid = (Traj_dataset.traj_valid - mean) / std
-    Traj_dataset.traj_test = (Traj_dataset.traj_test - mean) / std
     Traj_dataset.mean = mean
     Traj_dataset.std = std
 
