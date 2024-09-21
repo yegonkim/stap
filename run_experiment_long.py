@@ -66,6 +66,8 @@ def run_experiment(cfg):
         inputs = Y[:,:-1][train_indices][:,None,:]
         outputs = Y[:,1:][train_indices][:,None,:]
         assert inputs.shape[0] == train_indices.sum().item()
+
+        print(inputs.shape)
         
         dataset = torch.utils.data.TensorDataset(inputs, outputs)
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
@@ -133,15 +135,131 @@ def run_experiment(cfg):
             for x, y in testloader:
                 x, y = x.to(device), y.to(device)
                 y_pred = model(x)
+                # y = y.unsqueeze(2)
                 # print(y_pred.shape, y.shape)
-                assert y_pred.shape == y.shape
+                # assert y_pred.shape == y.shape
                 Y_test_pred.append(y_pred.cpu())
             Y_test_pred = torch.cat(Y_test_pred, dim=0)
         
+        Y_test = Y_test.unsqueeze(2)
         metrics = compute_metrics(Y_test, Y_test_pred, d=2)
 
         return metrics
 
+
+    # # test with teacher forcing
+    # @torch.no_grad()
+    # def test_tf(ensemble):
+    #     X_test = Traj_dataset.traj_test[:,0:(nt-1)*timestep:timestep] # [datasize, L, nx]
+    #     X_test=X_test.unsqueeze(2)
+    #     Y_test = Traj_dataset.traj_test[:,timestep:nt*timestep:timestep] # [datasize, L, nx]
+    #     Y_test = Y_test.unsqueeze(2)
+    #     X_test = X_test.flatten(0, 1) # [datasize*L, 1, nx]
+    #     Y_test = Y_test.flatten(0, 1) # [datasize*L, 1, nx]
+    #     # X_test = Traj_dataset.traj_test[:,0].unsqueeze(1).to(device)
+    #     # Y_test = Traj_dataset.traj_test[:,timestep::timestep].to(device)
+
+    #     testset = torch.utils.data.TensorDataset(X_test, Y_test)
+    #     testloader = torch.utils.data.DataLoader(testset, batch_size=cfg.eval_batch_size, shuffle=False)
+
+    #     preds = []
+    #     for model in ensemble:
+    #         model.eval()
+        
+    #         Y_test_pred = []
+    #         with torch.no_grad():
+    #             for x, y in testloader:
+    #                 x, y = x.to(device), y.to(device)
+    #                 y_pred = model(x)
+    #                 # print(y_pred.shape, y.shape)
+    #                 assert y_pred.shape == y.shape
+    #                 Y_test_pred.append(y_pred.cpu())
+    #             Y_test_pred = torch.cat(Y_test_pred, dim=0)
+    #         preds.append(Y_test_pred)
+    #     preds = torch.stack(preds, dim=0) # [ensemble_size, datasize*L, 1, nx]
+        
+    #     mean_pred = preds.mean(dim=0) # [datasize*L, 1, nx]
+    #     metrics = compute_metrics(Y_test, mean_pred, d=2, device=device) # (l2, rel_l2, mse)
+    #     metrics = torch.stack(metrics,dim=0).mean(dim=1) # [3]
+    #     metrics[2] = torch.sqrt(metrics[2]) # rmse
+    #     metrics_ensemble = metrics
+
+    #     metrics_individual = []
+    #     for i in range(ensemble_size):
+    #         metrics_i = compute_metrics(Y_test, preds[i], d=2, device=device)
+    #         metrics_i = torch.stack(metrics_i,dim=0).mean(dim=1) # [3]
+    #         metrics_i[2] = torch.sqrt(metrics_i[2])
+    #         metrics_individual.append(metrics_i)
+    #     metrics_individual = torch.stack(metrics_individual, dim=0) # [ensemble_size, 3]
+    #     metrics_individual = metrics_individual.mean(dim=0) # [3]
+
+    #     return metrics_individual, metrics_ensemble
+
+    # # test: l2, rel_l2, rmse
+    # @torch.no_grad()
+    # def test(ensemble):
+    #     X_test = Traj_dataset.traj_test[:,0] # [datasize, 1, nx]
+    #     X_test = X_test.unsqueeze(1)
+    #     Y_test = Traj_dataset.traj_test[:,timestep::timestep]
+
+    #     testset = torch.utils.data.TensorDataset(X_test, Y_test)
+    #     testloader = torch.utils.data.DataLoader(testset, batch_size=cfg.eval_batch_size, shuffle=False)
+        
+    #     preds = []
+    #     for model in ensemble:
+    #         model = trajectory_model(model, nt-1)
+    #         model.eval()
+        
+    #         Y_test_pred = []
+    #         with torch.no_grad():
+    #             for x, y in testloader:
+    #                 x, y = x.to(device), y.to(device)
+    #                 y_pred = model(x)
+    #                 y_pred = y_pred.squeeze(2)
+    #                 # print(y_pred.shape, y.shape)
+    #                 assert y_pred.shape == y.shape
+    #                 Y_test_pred.append(y_pred.cpu())
+    #             Y_test_pred = torch.cat(Y_test_pred, dim=0)
+    #         preds.append(Y_test_pred)
+    #     preds = torch.stack(preds, dim=0) # [ensemble_size, datasize, L, nx]
+        
+    #     mean_pred = preds.mean(dim=0) # [datasize*L, 1, nx]
+    #     metrics = compute_metrics(Y_test, mean_pred, d=2, device=device) # (l2, rel_l2, mse)
+    #     metrics = torch.stack(metrics,dim=0).mean(dim=1) # [3]
+    #     metrics[2] = torch.sqrt(metrics[2]) # rmse
+    #     metrics_ensemble = metrics
+
+    #     metrics_individual = []
+    #     for i in range(ensemble_size):
+    #         metrics_i = compute_metrics(Y_test, preds[i], d=2, device=device)
+    #         metrics_i = torch.stack(metrics_i,dim=0).mean(dim=1) # [3]
+    #         metrics_i[2] = torch.sqrt(metrics_i[2])
+    #         metrics_individual.append(metrics_i)
+    #     metrics_individual = torch.stack(metrics_individual, dim=0) # [ensemble_size, 3]
+    #     metrics_individual = metrics_individual.mean(dim=0) # [3]
+
+    #     return metrics_individual, metrics_ensemble
+
+    # def evaluate(ensemble):
+    #     results={}
+    #     results['datasize']=train_indices.sum().item()
+    #     metrics, metrics_ensemble = test(ensemble)
+    #     results['test/L2']=(metrics[0].item())
+    #     results['test/Relative_L2']=(metrics[1].item())
+    #     results['test/RMSE']=(metrics[2].item())
+    #     results['test_ensemble/L2']=(metrics_ensemble[0].item())
+    #     results['test_ensemble/Relative_L2']=(metrics_ensemble[1].item())
+    #     results['test_ensemble/RMSE']=(metrics_ensemble[2].item())
+    #     metrics, metrics_ensemble = test_tf(ensemble)
+    #     results['test_tf/L2']=(metrics[0].item())
+    #     results['test_tf/Relative_L2']=(metrics[1].item())
+    #     results['test_tf/RMSE']=(metrics[2].item())
+    #     results['test_tf_ensemble/L2']=(metrics_ensemble[0].item())
+    #     results['test_tf_ensemble/Relative_L2']=(metrics_ensemble[1].item())
+    #     results['test_tf_ensemble/RMSE']=(metrics_ensemble[2].item())
+    #     print(results)
+    #     wandb.log(results)
+    #     return metrics[2].item() # rmse
 
     timestep = (Traj_dataset.traj_train.shape[1] - 1) // (nt - 1) # 10
     # assert timestep == 10 # hardcoded for now (130/ (14-1) = 10)
@@ -157,6 +275,7 @@ def run_experiment(cfg):
     # 1 means only initial data, 14 means all data
 
     ensemble = [train(Y, train_indices, acquire_step=0) for _ in tqdm(range(ensemble_size))]
+    # evaluate(ensemble)
 
     results = {'datasize': [], 'l2': [], 'mse': [], 'rel_l2': [], 'l2_trajectory': [], 'mse_trajectory': [], 'rel_l2_trajectory': []}
 
@@ -176,6 +295,7 @@ def run_experiment(cfg):
     for acquire_step in range(1, num_acquire+1):
         train_indices[whole_initial_datasize:whole_initial_datasize+initial_datasize*(2**acquire_step)] = torch.bernoulli(torch.ones(initial_datasize*(2**acquire_step), nt-1) * p).bool()
         ensemble = [train(Y, train_indices, acquire_step=acquire_step) for _ in tqdm(range(ensemble_size))]
+        # evaluate(ensemble)
 
         results['datasize'].append(train_indices.sum().item())
         # rel_l2_list = [test(direct_model(model, nt-1))[1].mean().item() for model in ensemble]
@@ -189,7 +309,7 @@ def run_experiment(cfg):
         results['mse'].append(metrics_list[:, 2, :].mean().item())
         print(f'Datasize: {results["datasize"][-1]}, L2: {results["l2"][-1]}, Rel_l2: {results["rel_l2"][-1]}, MSE: {results["mse"][-1]}, L2_trajectory: {results["l2_trajectory"][-1]}, Rel_l2_trajectory: {results["rel_l2_trajectory"][-1]}, MSE_trajectory: {results["mse_trajectory"][-1]}')
         wandb.log({'datasize': results['datasize'][-1], f'l2': results['l2'][-1], f'rel_l2': results['rel_l2'][-1], f'mse': results['mse'][-1], f'l2_trajectory': results['l2_trajectory'][-1], f'rel_l2_trajectory': results['rel_l2_trajectory'][-1], f'mse_trajectory': results['mse_trajectory'][-1]})
-    return results
+    # return results
 
 
 def mean_std_normalize():

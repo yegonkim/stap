@@ -12,7 +12,7 @@ import time
 from typing import Tuple
 from copy import copy
 from datetime import datetime
-from PDEs import PDE, KdV, KS, nKdV, cKdV, Heat, GrayScott
+from PDEs import PDE, KdV, KS, nKdV, cKdV, Heat
 from torchdiffeq import odeint
 
 import hydra
@@ -313,13 +313,6 @@ def generate_data(experiment: str,
                   nt_effective=nt_effective,
                   L=L,
                   device=device)
-    elif experiment == 'GrayScott':
-        pde = GrayScott(tmin=starting_time,
-                  tmax=end_time,
-                  grid_size=(nt, nx, nx),
-                  nt_effective=nt_effective,
-                  L=L,
-                  device=device)
     else:
         raise Exception("Wrong experiment")
 
@@ -430,13 +423,6 @@ def _get_pde_object(cfg):
         pde = cKdV(tmin=starting_time,
                   tmax=end_time,
                   grid_size=(nt, nx),
-                  nt_effective=nt_effective,
-                  L=L,
-                  device=device)
-    elif experiment == 'GrayScott':
-        pde = GrayScott(tmin=starting_time,
-                  tmax=end_time,
-                  grid_size=(nt, nx, nx),
                   nt_effective=nt_effective,
                   L=L,
                   device=device)

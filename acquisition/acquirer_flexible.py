@@ -304,7 +304,7 @@ class Acquirer:
             assert total_cost <= budget
             assert top_index not in selected
             selected[top_index] = S
-        print(selected)
+        # print(selected)
         return selected
 
     ### Acquisition functions

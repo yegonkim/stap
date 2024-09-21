@@ -17,6 +17,10 @@ seed: 1
 device: cuda
 eval_batch_size: 256
 
+model:
+  n_modes: [256]
+
+
 train:
   unrolling: 0
   epochs: 100

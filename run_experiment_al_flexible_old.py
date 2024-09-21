@@ -318,6 +318,13 @@ def run_experiment(cfg):
         ensemble = [train(Y, unrolling=cfg.train.unrolling, acquire_step=0) for _ in tqdm(range(ensemble_size))]
         evaluate(ensemble)
 
+    # # save train_nts to wandb
+    # train_nts = acquirer.train_nts.cpu().numpy()
+    # run_dir = wandb.run.dir
+    # np.save(os.path.join(run_dir, 'train_nts.npy'), train_nts)
+    # artifact = wandb.Artifact(name = "results", type = "dataset")
+    # artifact.add_file(os.path.join(run_dir, 'train_nts.npy'))
+    # wandb.log_artifact(artifact)
 
 def mean_std_normalize():
     ndim = Traj_dataset.traj_train_32.ndim

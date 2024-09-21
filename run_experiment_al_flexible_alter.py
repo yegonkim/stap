@@ -9,14 +9,14 @@ import argparse
 import time
 
 from eval_utils import compute_metrics
-from utils import set_seed, flatten_configdict, trajectory_model, direct_model, split_model, normalized_model
+from utils import set_seed, flatten_configdict, trajectory_model, direct_model, split_model, normalized_model, residual_model, normalized_residual_model
 from acquisition.acquirer_flexible import Acquirer
 
 from omegaconf import OmegaConf
 import hydra
 import wandb
 
-from synthetic_acquisition import Y_from_selected
+from synthetic_acquisition import Y_from_selected, Y_from_selected_cheat
 
 import os
 os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
@@ -36,22 +36,27 @@ class Pool:
         with h5py.File(self.path, 'r') as f:
             if isinstance(key, torch.Tensor):
                 if key.ndim == 0:
-                    return torch.tensor(f['train']['pde'][key.item(), 0], dtype=torch.float32)
-
+                    tensor = torch.tensor(f['train']['pde_140-256'][key.item(), 0], dtype=torch.float32)
                 # Handle PyTorch tensor
                 if key.dtype == torch.bool:
                     # Boolean indexing
-                    return torch.tensor(np.stack([f['train']['pde'][i, 0] for i, select in enumerate(key) if select], axis=0), dtype=torch.float32)
+                    tensor = torch.tensor(np.stack([f['train']['pde_140-256'][i, 0] for i, select in enumerate(key) if select], axis=0), dtype=torch.float32)
+                    # return torch.tensor(np.stack([f['train']['pde_140-256'][i, 0] for i, select in enumerate(key) if select], axis=0), dtype=torch.float32)
                 else:
                     # Integer indexing
-                    return torch.tensor(np.stack([f['train']['pde'][i.item(), 0] for i in key], axis=0), dtype=torch.float32)
+                    tensor = torch.tensor(np.stack([f['train']['pde_140-256'][i.item(), 0] for i in key], axis=0), dtype=torch.float32)
+                    # return torch.tensor(np.stack([f['train']['pde_140-256'][i.item(), 0] for i in key], axis=0), dtype=torch.float32)
             elif isinstance(key, tuple):
-                return torch.tensor(np.stack([f['train']['pde'][k, 0] for k in key], axis=0), dtype=torch.float32)
+                tensor = torch.tensor(np.stack([f['train']['pde_140-256'][k, 0] for k in key], axis=0), dtype=torch.float32)
+                # return torch.tensor(np.stack([f['train']['pde_140-256'][k, 0] for k in key], axis=0), dtype=torch.float32)
             elif isinstance(key, slice):
-                return torch.tensor(f['train']['pde'][key.start:key.stop:key.step, 0], dtype=torch.float32)
+                tensor = torch.tensor(f['train']['pde_140-256'][key.start:key.stop:key.step, 0], dtype=torch.float32)
+                # return torch.tensor(f['train']['pde_140-256'][key.start:key.stop:key.step, 0], dtype=torch.float32)
             else:
                 assert key < self.datasize
-                return torch.tensor(f['train']['pde'][key, 0], dtype=torch.float32)
+                tensor = torch.tensor(f['train']['pde_140-256'][key, 0], dtype=torch.float32)
+                # return torch.tensor(f['train']['pde_140-256'][key, 0], dtype=torch.float32)
+        return tensor.unsqueeze(1)
     
     def __len__(self):
         return self.datasize
@@ -61,25 +66,35 @@ class Pool_with_traj:
         self.path = path
         self.timestep = timestep
         self.datasize = datasize
-    
+
     def __getitem__(self, key):
         with h5py.File(self.path, 'r') as f:
             if isinstance(key, torch.Tensor):
-                    # Handle PyTorch tensor
-                    if key.dtype == torch.bool:
-                        # Boolean indexing
-                        return torch.stack([f['train']['pde'][i, :131:self.timestep] for i, select in enumerate(key) if select], dim=0)
-                    else:
-                        # Integer indexing
-                        return torch.stack([f['train']['pde'][i.item(), :131:self.timestep] for i in key], dim=0)
+                if key.ndim == 0:
+                    tensor = torch.tensor(f['train']['pde_140-256'][key.item(), :131:self.timestep], dtype=torch.float32)
+                    # return torch.tensor(f['train']['pde_140-256'][key.item(), :131:self.timestep], dtype=torch.float32)
+
+                # Handle PyTorch tensor
+                if key.dtype == torch.bool:
+                    # Boolean indexing
+                    tensor = torch.tensor(np.stack([f['train']['pde_140-256'][i, :131:self.timestep] for i, select in enumerate(key) if select], axis=0), dtype=torch.float32)
+                    # return torch.tensor(np.stack([f['train']['pde_140-256'][i, :131:self.timestep] for i, select in enumerate(key) if select], axis=0), dtype=torch.float32)
+                else:
+                    # Integer indexing
+                    tensor = torch.tensor(np.stack([f['train']['pde_140-256'][i.item(), :131:self.timestep] for i in key], axis=0), dtype=torch.float32)
+                    # return torch.tensor(np.stack([f['train']['pde_140-256'][i.item(), :131:self.timestep] for i in key], axis=0), dtype=torch.float32)
             elif isinstance(key, tuple):
-                return torch.stack([torch.tensor(f['train']['pde'][k, :131:self.timestep], dtype=torch.float32) for k in key], dim=0)
+                tensor = torch.tensor(np.stack([f['train']['pde_140-256'][k, :131:self.timestep] for k in key], axis=0), dtype=torch.float32)
+                # return torch.tensor(np.stack([f['train']['pde_140-256'][k, :131:self.timestep] for k in key], axis=0), dtype=torch.float32)
             elif isinstance(key, slice):
-                return torch.tensor(f['train']['pde'][key.start:key.stop:key.step, :131:self.timestep], dtype=torch.float32)
+                tensor = torch.tensor(f['train']['pde_140-256'][key.start:key.stop:key.step, :131:self.timestep], dtype=torch.float32)
+                # return torch.tensor(f['train']['pde_140-256'][key.start:key.stop:key.step, :131:self.timestep], dtype=torch.float32)
             else:
                 assert key < self.datasize
-                return torch.tensor(f['train']['pde'][key, :131:self.timestep], dtype=torch.float32)
-
+                tensor = torch.tensor(f['train']['pde_140-256'][key, :131:self.timestep], dtype=torch.float32)
+                # return torch.tensor(f['train']['pde_140-256'][key, :131:self.timestep], dtype=torch.float32)
+        return tensor.unsqueeze(1)
+    
     def __len__(self):
         return self.datasize
     
@@ -122,7 +137,8 @@ def run_experiment(cfg):
                     in_channels=num_channels, out_channels=num_channels)
 
         model = model.to(device)
-        model = normalized_model(model, Traj_dataset.mean, Traj_dataset.std, Traj_dataset.mean, Traj_dataset.std)
+        # model = normalized_model(model, Traj_dataset.mean, Traj_dataset.std, Traj_dataset.mean, Traj_dataset.std)
+        # model = normalized_residual_model(model, Traj_dataset.mean, Traj_dataset.std)
 
         if len(Y) == 0:
             return model
@@ -141,6 +157,7 @@ def run_experiment(cfg):
         outputs = torch.cat(outputs, dim=0)
         assert inputs.shape[0] == outputs.shape[0]
         assert inputs.shape[1] == num_channels
+        print('Datasize:', inputs.shape[0])
         
         dataset = torch.utils.data.TensorDataset(inputs, outputs)
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
@@ -167,6 +184,68 @@ def run_experiment(cfg):
             # wandb.log({f'train/loss_{acquire_step}': total_loss})
         return model
 
+    def train_2(pool_with_traj, selected):
+        model = FNO(n_modes=tuple(cfg.model.n_modes), hidden_channels=64,
+                    in_channels=num_channels, out_channels=num_channels)
+
+        model = model.to(device)
+        # model = normalized_model(model, Traj_dataset.mean, Traj_dataset.std, Traj_dataset.mean, Traj_dataset.std)
+        # model = normalized_residual_model(model, Traj_dataset.mean, Traj_dataset.std)
+
+        # if len(Y) == 0:
+        #     return model
+
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs)
+        criterion = torch.nn.MSELoss()
+
+        inputs, outputs = [], []
+        for index, S in selected.items():
+            data = pool_with_traj[index]
+            assert data.shape[0] == nt
+            inputs.append(data[:-1][S[0]]) # [L, 1, nx]
+            outputs.append(data[1:][S[0]]) # [L, 1, nx]
+        inputs = torch.cat(inputs, dim=0) # [datasize, 1, nx]
+        outputs = torch.cat(outputs, dim=0) # [datasize, 1, nx]
+        assert inputs.shape[0] == outputs.shape[0]
+        assert inputs.shape[1] == num_channels
+        print('Datasize:', inputs.shape[0])
+
+        # for traj in Y:
+        #     if len(traj) == 1: # skip the trajectory with only one point
+        #         continue
+        #     inputs.append(traj[:-1])
+        #     outputs.append(traj[1:])
+        # inputs = torch.cat(inputs, dim=0)
+        # outputs = torch.cat(outputs, dim=0)
+        # assert inputs.shape[0] == outputs.shape[0]
+        # assert inputs.shape[1] == num_channels
+        # print('Datasize:', inputs.shape[0])
+        
+        dataset = torch.utils.data.TensorDataset(inputs, outputs)
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+        model.train()
+        for epoch in range(epochs):
+            model.train()
+            # max_unrolling = epoch if epoch <= unrolling else unrolling
+            # unrolling_list = [r for r in range(max_unrolling + 1)]
+
+            total_loss = 0
+            for x, y in dataloader:
+                optimizer.zero_grad()
+                x, y = x.to(device), y.to(device)
+                
+                pred = model(x)
+                loss = criterion(pred, y)
+
+                # loss = torch.sqrt(loss)
+                loss.backward()
+                optimizer.step()
+                total_loss += loss.item()
+            scheduler.step()
+            # wandb.log({f'train/loss_{acquire_step}': total_loss})
+        return model
 
     # test with teacher forcing
     @torch.no_grad()
@@ -279,6 +358,8 @@ def run_experiment(cfg):
         return metrics[2].item() # rmse
 
     datasize = 0
+    selected_all = {}
+
     train_indices = {} # a dictionary of form {index: S}
     for d in range(initial_datasize):
         train_indices[d] = torch.ones(L, device=device, dtype=torch.bool)
@@ -293,7 +374,9 @@ def run_experiment(cfg):
         datasize += L
 
     ensemble = [train(Y, unrolling=cfg.train.unrolling, acquire_step=0) for _ in tqdm(range(ensemble_size))]
-    evaluate(ensemble)
+    # evaluate(ensemble)
+
+    
 
     for acquire_step in range(1, num_acquire+1):
         acquirer = Acquirer(ensemble, Traj_dataset.pool, L, train_indices, cfg)
@@ -302,9 +385,20 @@ def run_experiment(cfg):
         else:
             selected = acquirer.select(L * cfg.batch_acquire)
 
+        selected_all.update(selected)
+        print(selected)
         datasize += sum([selected[i].sum() for i in selected])
 
-        Y += Y_from_selected(ensemble, selected, Traj_dataset.pool, L, cfg)
+        # ensemble = [train_2(Traj_dataset.pool_with_traj, selected) for _ in tqdm(range(ensemble_size))]
+        # ensemble = [train_2(Traj_dataset.pool_with_traj, selected_all) for _ in tqdm(range(ensemble_size))]
+        # evaluate(ensemble)
+
+
+        if cfg.cheat == False:
+            Y += Y_from_selected(ensemble, selected, Traj_dataset.pool, L, cfg)
+        else:
+            # Y += Y_from_selected_cheat(ensemble, selected, Traj_dataset.pool, L, cfg)
+            Y += Y_from_selected_cheat(ensemble, selected, Traj_dataset.pool_with_traj, L, cfg)
 
         ensemble = [train(Y, unrolling=cfg.train.unrolling, acquire_step=0) for _ in tqdm(range(ensemble_size))]
         evaluate(ensemble)
@@ -326,8 +420,9 @@ def mean_std_normalize():
     Traj_dataset.std = std
 
 def max_min_normalize():
-    max_val = Traj_dataset.traj_train_32.max(dim=(), keepdim=True).values.squeeze(1)
-    min_val = Traj_dataset.traj_train_32.min(dim=2, keepdim=True).values.squeeze(1)
+    ndim = Traj_dataset.traj_train_32.ndim
+    max_val = Traj_dataset.traj_train_32.max()
+    min_val = Traj_dataset.traj_train_32.min()
     mean = (max_val + min_val) / 2
     std = (max_val - min_val) / 2
     print(f'Max: {max_val}, Min: {min_val}')
@@ -356,10 +451,10 @@ def main(cfg: OmegaConf):
     
     print('Loading training data...')
     with h5py.File(cfg.dataset.train_path, 'r') as f:
-        Traj_dataset.traj_train_32 = torch.tensor(f['train']['pde'][:32, :131], dtype=torch.float32)
+        Traj_dataset.traj_train_32 = torch.tensor(f['train']['pde_140-256'][:32, :131], dtype=torch.float32).unsqueeze(2)
     print('Loading test data...')
     with h5py.File(cfg.dataset.test_path, 'r') as f:
-        Traj_dataset.traj_test = torch.tensor(f['test']['pde'][:cfg.testsize, :131], dtype=torch.float32)
+        Traj_dataset.traj_test = torch.tensor(f['test']['pde_140-256'][:cfg.testsize, :131], dtype=torch.float32).unsqueeze(2)
 
     timestep = (Traj_dataset.traj_train_32.shape[1] - 1) // (cfg.nt - 1) # 10
 
@@ -370,6 +465,8 @@ def main(cfg: OmegaConf):
         max_min_normalize()
     else:
         mean_std_normalize()
+
+    # mean_std_normalize()
 
     run_experiment(cfg)
     wandb.finish()

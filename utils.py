@@ -83,4 +83,30 @@ class normalized_model(torch.nn.Module):
     def forward(self, x):
         return self.model((x - self.mean_x) / self.std_x) * self.std_y + self.mean_y
     
+class residual_model(torch.nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
     
+    def forward(self, x):
+        return x + self.model(x)
+
+class normalized_residual_model(torch.nn.Module):
+    def __init__(self, model, mean, std):
+        super().__init__()
+        self.model = model
+        device = next(model.parameters()).device
+        self.mean = mean.to(device)
+        self.std = std.to(device)
+    
+    def forward(self, x):
+        return x + self.model((x - self.mean) / self.std) * self.std
+
+class zero_mean_model(torch.nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+    def forward(self, x):
+        output = self.model(x) # [bs, c, nx]
+        mean = output.mean(dim=tuple(range(2,output.ndim)), keepdim=True)
+        return output - mean

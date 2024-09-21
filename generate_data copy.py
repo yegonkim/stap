@@ -12,14 +12,16 @@ import time
 from typing import Tuple
 from copy import copy
 from datetime import datetime
-from PDEs import PDE, KdV, KS, nKdV, cKdV, Heat, GrayScott
+from PDEs import PDE, KdV, KS, nKdV, cKdV, Heat
+from simulation.ns import NS
+
 from torchdiffeq import odeint
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
 
-def check_files(pde: PDE, modes: dict) -> None:
+def check_files(pde_name: str, modes: dict) -> None:
     """
     Check if data files exist and replace them if wanted.
     Args:
@@ -29,7 +31,7 @@ def check_files(pde: PDE, modes: dict) -> None:
             None
     """
     for mode, replace, num_samples in modes:
-        save_name = "data/" + "_".join([str(pde), mode])
+        save_name = "data/" + "_".join([pde_name, mode])
         save_name = save_name + "_" + str(num_samples)
         if (replace == True):
             if os.path.exists(f'{save_name}.h5'):
@@ -217,9 +219,86 @@ def generate_trajectories(pde: PDE,
     print()
     h5f.close()
 
-
-
 def generate_data(experiment: str,
+                  starting_time : float,
+                  end_time: float,
+                  L: float,
+                  nx: int,
+                  nt: int,
+                  nt_effective: int,
+                  num_samples_train: int,
+                  num_samples_valid: int,
+                  num_samples_test: int,
+                  batch_size: int=1,
+                  device: torch.cuda.device="cpu",
+                  nu: float=0.01,
+                  cfg=None) -> None:
+    if experiment in ['KdV', 'KS', 'Heat', 'nKdV', 'cKdV', 'Burgers']:
+        _generate_data_ps(experiment, starting_time, end_time, L, nx, nt, nt_effective, num_samples_train, num_samples_valid, num_samples_test, batch_size, device, nu, cfg)
+    elif experiment in ['NS']:
+        _generate_data_sim(experiment, starting_time, end_time, L, nx, nt, nt_effective, num_samples_train, num_samples_valid, num_samples_test, batch_size, device, nu, cfg)
+
+def _generate_data_sim(experiment: str,
+                  starting_time : float,
+                  end_time: float,
+                  L: float,
+                  nx: int,
+                  nt: int,
+                  nt_effective: int,
+                  num_samples_train: int,
+                  num_samples_valid: int,
+                  num_samples_test: int,
+                  batch_size: int=1,
+                  device: torch.cuda.device="cpu",
+                  nu: float=0.01,
+                  cfg=None) -> None:
+    print(f'Generating data')
+
+
+    # Check if train, valid and test files already exist and replace if wanted
+    files = {("train", num_samples_train > 0, num_samples_train),
+             ("valid", num_samples_valid > 0, num_samples_valid),
+             ("test", num_samples_test > 0, num_samples_test)}
+    check_files(experiment, files)
+
+    for mode, _, num_samples in files:
+        if num_samples > 0:
+            if experiment == 'NS':
+                sim = NS()
+            else:
+                raise Exception("Wrong experiment")
+        
+            num_batches = int(np.ceil(num_samples / batch_size))
+
+            for batch_idx in range(num_batches):
+
+                n_data = min((batch_idx+1) * batch_size,num_samples) - batch_idx * batch_size
+                if n_data == 0:
+                    continue
+                u0_list = []
+                try:
+                    u0 = sim.query_in()
+                        
+                
+                    spectral_method = pde.pseudospectral_reconstruction_batch
+                            
+                    u0 = torch.tensor(np.stack(u0_list,axis=0)).to(device)
+                    t = torch.tensor(t).to(device)
+
+                    solved_trajectory = odeint(func=spectral_method,
+                                                t=t,
+                                                y0=u0,
+                                                method=cfg.generate_data.solver,
+                                                atol=atol,
+                                                rtol=rtol)
+                except AssertionError:
+                    print(f'An error occured - possibly an underflow. re-running {trial}/5')
+
+            
+
+
+
+def _generate_data_ps(experiment: str,
                   starting_time : float,
                   end_time: float,
                   L: float,
@@ -313,13 +392,6 @@ def generate_data(experiment: str,
                   nt_effective=nt_effective,
                   L=L,
                   device=device)
-    elif experiment == 'GrayScott':
-        pde = GrayScott(tmin=starting_time,
-                  tmax=end_time,
-                  grid_size=(nt, nx),
-                  nt_effective=nt_effective,
-                  L=L,
-                  device=device)
     else:
         raise Exception("Wrong experiment")
 
@@ -327,7 +399,7 @@ def generate_data(experiment: str,
     files = {("train", num_samples_train > 0, num_samples_train),
              ("valid", num_samples_valid > 0, num_samples_valid),
              ("test", num_samples_test > 0, num_samples_test)}
-    check_files(pde, files)
+    check_files(str(pde), files)
     
     # save pde object
     # with open(os.path.join('data',f'{str(pde)}.pkl'),'wb') as f:
@@ -428,13 +500,6 @@ def _get_pde_object(cfg):
                   device=device)
     elif experiment == 'cKdV':
         pde = cKdV(tmin=starting_time,
-                  tmax=end_time,
-                  grid_size=(nt, nx),
-                  nt_effective=nt_effective,
-                  L=L,
-                  device=device)
-    elif experiment == 'GrayScott':
-        pde = GrayScott(tmin=starting_time,
                   tmax=end_time,
                   grid_size=(nt, nx),
                   nt_effective=nt_effective,

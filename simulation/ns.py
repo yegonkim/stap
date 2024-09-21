@@ -14,39 +14,37 @@ from torch.func import jvp
 
 # from hdf5storage import savemat
 
-from .sim import Sim
 from utils import GaussianRF
 
-class NS(Sim):
-    def __init__(self, cfg):
-        super().__init__(cfg)
+class NS():
+    def __init__(self, tmax=0, dt=0, vis=0):
+        super().__init__()
         self.ndim = 2
         self.fid = 32
-        self.cfg = cfg
         self.ubound = 2.0
         self.lbound = -2.0
         self.dim_out = 1
-        self.tmax = cfg.sim.ns_params.tmax
-        self.dt = cfg.sim.ns_params.dt
-        self.vis = cfg.sim.ns_params.vis
-        # self.GRF = GaussianRF(2, self.fid, alpha=2.5, tau=7, sigma=None, device=cfg.device)
-        self.GRF = GaussianRF(2, self.fid, alpha=cfg.train.alpha, tau=cfg.train.tau, sigma=None, device=cfg.device)
+        self.tmax = tmax
+        self.dt = dt
+        self.vis = vis
+        self.GRF = GaussianRF(2, self.fid, alpha=2.5, tau=7, sigma=None, device=cfg.device)
+        # self.GRF = GaussianRF(2, self.fid, alpha=cfg.train.alpha, tau=cfg.train.tau, sigma=None, device=cfg.device)
         self.param_dim = self.fid**2 * 2
 
     def solve(self, X):
         return solve_navier_stokes_2d(X, self.vis, self.tmax, self.dt, 1)[..., -1]
 
-    def query_in_unnorm(self, params):
+    def query_in(self, params):
         # params: [*bs, fid^2 * 2]
         bs = params.shape[:-1]
         params = params.view(*bs, -1)
         coeff = params.view(-1, self.fid, self.fid, 2)
-        X = self.GRF.sample(coeff) * self.cfg.train.scale
+        X = self.GRF.sample(coeff)
         X = X.view(*bs, *X.shape[-2:])
 
-        return X # [bs, fid]
+        return X # [bs, fid, fid]
     
-    def query_out_unnorm(self, X):
+    def query_out(self, X):
         # X: [*bs, fid, fid]
         bs = X.shape[:-2]
         s = X.shape[-2:]
@@ -55,47 +53,6 @@ class NS(Sim):
         Y = Y.view(*bs, *Y.shape[-2:])
         return Y
 
-
-
-# class NS_kol(Sim):
-#     def __init__(self, cfg):
-#         self.ndim = 2
-#         self.fid = 32
-#         self.cfg = cfg
-#         self.ubound = 2.0
-#         self.lbound = -2.0
-#         self.dim_out = 1
-#         self.tmax = cfg.sim.ns_params.tmax
-#         self.dt = cfg.sim.ns_params.dt
-#         self.GRF = GaussianRF(2, self.fid, alpha=2.5, tau=7, sigma=None, device=cfg.device)
-
-#     def get_params(self, N=None):
-#         params = torch.rand(N, (self.fid**2) * 2)
-#         params = params * (self.ubound - self.lbound) + self.lbound
-#         return params.to(self.cfg.device)
-
-#     def solve(self, X):
-#         return solve_navier_stokes_2d(X, 1e-3, self.tmax, self.dt, 1, force=Force.kolmogorov)[..., -1]
-
-#     def query_in_unnorm(self, params):
-#         # params: [*bs, fid^2 * 2]
-#         bs = params.shape[:-1]
-#         params = params.view(*bs, -1)
-#         coeff = params.view(-1, self.fid, self.fid, 2)
-#         X = self.GRF.sample(coeff)
-#         X = X.view(*bs, *X.shape[-2:])
-
-#         return X # [bs, fid]
-    
-#     def query_out_unnorm(self, X):
-#         # X: [*bs, fid, fid]
-#         bs = X.shape[:-2]
-#         s = X.shape[-2:]
-#         X = X.view(-1, *s)
-#         Y = self.solve(X)
-#         Y = Y.view(*bs, *Y.shape[-2:])
-#         return Y
-    
 class Force(str, Enum):
     li = 'li'
     random = 'random'
@@ -154,9 +111,6 @@ def solve_navier_stokes_2d(w0, visc, T, delta_t, record_steps, cycles=None,
         ft = ft[0:-1]
         X, Y = torch.meshgrid(ft, ft, indexing='ij')
         f = -4 * torch.cos(4 * Y)
-    elif force == Force.random and not varying_force:
-        f = get_random_force(
-            w0.shape[0], N, w0.device, cycles, scaling, 0, 0, seed)
     else:
         f = None
 
@@ -249,10 +203,10 @@ def solve_navier_stokes_2d(w0, visc, T, delta_t, record_steps, cycles=None,
 
         if force == Force.none:
             f_h = 0
-        elif varying_force:
-            f = get_random_force(w0.shape[0], N, w0.device, cycles,
-                                 scaling, t, t_scaling, seed)
-            f_h = torch.fft.fftn(f, dim=[-2, -1], norm='backward')
+        # elif varying_force:
+        #     f = get_random_force(w0.shape[0], N, w0.device, cycles,
+        #                          scaling, t, t_scaling, seed)
+        #     f_h = torch.fft.fftn(f, dim=[-2, -1], norm='backward')
 
         # Cranck-Nicholson update
         factor = 0.5 * delta_t * visc * lap

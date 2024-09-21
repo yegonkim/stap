@@ -1,7 +1,7 @@
 # torch
 import torch
 import numpy as np
-from utils import normalized_model
+from utils import normalized_model, normalized_residual_model
 
 @torch.no_grad()
 def get_features_ycov(X, ensemble):
@@ -84,7 +84,7 @@ def get_features_hidden_trajectory(X, ensemble, num_steps, device):
                 activations[name] = output.detach()
             return hook
 
-        if isinstance(model, normalized_model):
+        if isinstance(model, normalized_model) or isinstance(model, normalized_residual_model):
             model.model.projection.fcs[0].register_forward_hook(get_activation('hidden'))
         else:
             model.projection.fcs[0].register_forward_hook(get_activation('hidden'))
