@@ -21,7 +21,7 @@ dataset:
 
 generate_data:
   L: 64.0
-  nt: 500
-  end_time: 100.0
+  nt: 140
+  end_time: 21.6
   atol: 1e-6
   rtol: 1e-8

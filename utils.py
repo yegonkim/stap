@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import random
+import math
 
 from omegaconf import OmegaConf
 import pandas as pd
@@ -110,3 +111,82 @@ class zero_mean_model(torch.nn.Module):
         output = self.model(x) # [bs, c, nx]
         mean = output.mean(dim=tuple(range(2,output.ndim)), keepdim=True)
         return output - mean
+    
+class zero_mean_constant_energy_model(torch.nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+    def forward(self, x):
+        energy = x.pow(2).sum(dim=tuple(range(2,x.ndim)), keepdim=True)
+        output = self.model(x) # [bs, c, nx]
+        mean = output.mean(dim=tuple(range(2,output.ndim)), keepdim=True)
+        output = output - mean
+        output_energy = output.pow(2).sum(dim=tuple(range(2,output.ndim)), keepdim=True)
+        output = output * energy.sqrt() / output_energy.sqrt()
+        return output
+
+class GaussianRF:
+    def __init__(self, n_dims, size, alpha=2, tau=3, sigma=None, device=None):
+
+        self.n_dims = n_dims
+        self.device = device
+
+        if sigma is None:
+            sigma = tau**(0.5*(2*alpha - self.n_dims))
+
+        k_max = size//2
+
+        if n_dims == 1:
+            self.dim = [-1]
+            k = torch.cat((torch.arange(start=0, end=k_max, step=1, device=device),
+                           torch.arange(start=-k_max, end=0, step=1, device=device)), 0)
+
+            self.sqrt_eig = size * \
+                math.sqrt(2.0)*sigma * \
+                ((4*(math.pi**2)*(k**2) + tau**2)**(-alpha/2.0))
+            self.sqrt_eig[0] = 0.0
+
+        elif n_dims == 2:
+            self.dim = [-1, -2]
+            wavenumers = torch.cat((torch.arange(start=0, end=k_max, step=1, device=device),
+                                    torch.arange(start=-k_max, end=0, step=1, device=device)), 0).repeat(size, 1)
+
+            k_x = wavenumers.transpose(0, 1)
+            k_y = wavenumers
+
+            self.sqrt_eig = (size**2)*math.sqrt(2.0)*sigma * \
+                ((4*(math.pi**2)*(k_x**2 + k_y**2) + tau**2)**(-alpha/2.0))
+            self.sqrt_eig[0, 0] = 0.0
+
+        elif n_dims == 3:
+            self.dim = [-1, -2, -3]
+            wavenumers = torch.cat((torch.arange(start=0, end=k_max, step=1, device=device),
+                                    torch.arange(start=-k_max, end=0, step=1, device=device)), 0).repeat(size, size, 1)
+
+            k_x = wavenumers.transpose(1, 2)
+            k_y = wavenumers
+            k_z = wavenumers.transpose(0, 2)
+
+            self.sqrt_eig = (size**3)*math.sqrt(2.0)*sigma*((4*(math.pi**2)
+                                                             * (k_x**2 + k_y**2 + k_z**2) + tau**2)**(-alpha/2.0))
+            self.sqrt_eig[0, 0, 0] = 0.0
+
+        self.size = []
+        for _ in range(self.n_dims):
+            self.size.append(size)
+
+        self.size = tuple(self.size)
+
+    def sample(self, coeff):
+        # coeff = torch.randn(N, *self.size, 2, device=self.device)
+        # assert self.device == xi.device
+        # coeff = xi.view(-1, *self.size, 2)
+        coeff = coeff.clone()
+        coeff[..., 0] = self.sqrt_eig*coeff[..., 0]
+        coeff[..., 1] = self.sqrt_eig*coeff[..., 1]
+
+        u = torch.fft.ifftn(torch.view_as_complex(
+            coeff), dim=self.dim, norm='backward').real
+
+        return u
+    

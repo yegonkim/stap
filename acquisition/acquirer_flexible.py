@@ -6,7 +6,7 @@ import numpy as np
 from .acquisition_function import EER_Calculator
 
 class Acquirer:
-    def __init__(self, ensemble, pool, L, train_indices, cfg):
+    def __init__(self, ensemble, pool, L, train_indices, cfg, max_filter=0, min_filter=0):
         self.device = cfg.device
         self.ensemble = ensemble
         self.pool = pool
@@ -17,6 +17,9 @@ class Acquirer:
         self.initial_selection_method = cfg.initial_selection_method
         self.post_selection_method = cfg.post_selection_method
         self.eer_mode = 'MF-EER' if cfg.mean_field else 'EER'
+        self.max_filter = max_filter
+        self.min_filter = min_filter
+        self.filter = cfg.filter
 
     def _eval_mode(self):
         for model in self.ensemble:
@@ -173,6 +176,11 @@ class Acquirer:
         X = X.unsqueeze(0)
         bs = X.shape[0] # 1
 
+        feasibility = self._check_feasibility(X)
+        if feasibility:
+            print('filtered')
+            return torch.ones(1,L).bool() # pick all
+
         max_L = min(L, budget)
 
         if "prior" in selection_method.split("_"):
@@ -283,6 +291,12 @@ class Acquirer:
         else:
             raise ValueError(f"Post selection method {selection_method} not implemented.")
         return S
+    
+    @torch.no_grad()
+    def flexible_selection(self, budget):
+        selection_method = self.flexible_selection_method
+        L = self.L
+        pass
             
 
     def select(self, budget):
@@ -304,7 +318,7 @@ class Acquirer:
             assert total_cost <= budget
             assert top_index not in selected
             selected[top_index] = S
-        # print(selected)
+        print(selected)
         return selected
 
     ### Acquisition functions
@@ -318,14 +332,31 @@ class Acquirer:
             raise ValueError("No samples to compute scores.")
         
         X = X.to(self.device) # [bs, 1, nx]
-        assert X.ndim==3
 
         scores = self._compute_variance(X, timesteps=L) # [bs, nt-1-starting_time]
         return scores
 
     @torch.no_grad()
+    def _check_feasibility(self, X):
+        X = X.to(self.device) # [bs, 1, nx]
+        ensemble = self.ensemble
+        
+        feasibility_list = []
+        for model in ensemble:
+            model.eval()
+            pred = trajectory_model(split_model(model, self.eval_batch_size), self.L)(X)
+            feasibility = torch.logical_or(pred > self.max_filter*self.filter, pred < self.min_filter*self.filter)
+            feasibility = feasibility.any(dim=tuple(range(1, feasibility.dim())))
+            feasibility_list.append(feasibility)
+        feasibility = torch.stack(feasibility_list, dim=1).any(dim=1) # [bs]
+        assert feasibility.shape == (X.shape[0],)
+        return feasibility # [bs]
+
+
+    @torch.no_grad()
     def _compute_variance(self, X, timesteps):
         features = self._compute_features(X, timesteps) # [N, bs, max_timesteps, nx]
+        features = features.flatten(start_dim=3)  # [N, bs, max_timesteps, nx]
         variance = torch.sum(features**2, dim=(0, 3)) # [bs, max_timesteps]
         return variance
 
@@ -380,6 +411,7 @@ class Acquirer:
         indices = torch.arange(features.shape[2])[None,:] >= (starting_time+1)[:,None] # [bs, nt]
         indices2 = torch.arange(features_temp.shape[2])[None,:] < timesteps[:,None] # [bs, nt]
         features[:, indices, :] = features_temp[:, indices2, :] # [n_models, bs, nt, nx]
+        features = features.flatten(start_dim=3)  # [n_models, bs, nt, nx]
         variance = torch.sum(features**2, dim=(0, 3)) # [bs, nt]
         # scores = torch.cumsum(variance, dim=1) # [bs, nt]
         # return scores[:, 1:] # [bs, nt-1]
@@ -399,6 +431,7 @@ class Acquirer:
         indices = torch.arange(features.shape[2])[None,:] >= (starting_time+1)[:,None] # [bs, nt]
         indices2 = torch.arange(features_temp.shape[2])[None,:] < timesteps[:,None] # [bs, nt]
         features[:, indices, :] = features_temp[:, indices2, :] # [n_models, bs, nt, nx]
+        features = features.flatten(start_dim=3)  # [n_models, bs, nt, nx]
         variance = torch.sum(features**2, dim=(0, 3)) # [bs, nt]
         scores = torch.cumsum(variance, dim=1) # [bs, nt]
         return scores[:, 1:] # [bs, nt-1]

@@ -1,33 +1,24 @@
 import numpy as np
-import string, random, os, time
-from scipy import interpolate
-import subprocess
 import torch
-import sys
-import torch_dct as dct
 from tqdm import tqdm
 import math
 from enum import Enum
 from einops import rearrange, repeat
-import torch.autograd.forward_ad as fwAD
-from torch.func import jvp
 
 # from hdf5storage import savemat
 
 from utils import GaussianRF
 
 class NS():
-    def __init__(self, tmax=0, dt=0, vis=0):
+    def __init__(self, tmax=0, dt=0, vis=0, fid=32, device='cpu'):
         super().__init__()
         self.ndim = 2
-        self.fid = 32
-        self.ubound = 2.0
-        self.lbound = -2.0
+        self.fid = fid
         self.dim_out = 1
         self.tmax = tmax
         self.dt = dt
         self.vis = vis
-        self.GRF = GaussianRF(2, self.fid, alpha=2.5, tau=7, sigma=None, device=cfg.device)
+        self.GRF = GaussianRF(2, self.fid, alpha=2, tau=7, sigma=None, device=device)
         # self.GRF = GaussianRF(2, self.fid, alpha=cfg.train.alpha, tau=cfg.train.tau, sigma=None, device=cfg.device)
         self.param_dim = self.fid**2 * 2
 
@@ -51,7 +42,7 @@ class NS():
         X = X.view(-1, *s)
         Y = self.solve(X)
         Y = Y.view(*bs, *Y.shape[-2:])
-        return Y
+        return Y # [bs, fid, fid]
 
 class Force(str, Enum):
     li = 'li'

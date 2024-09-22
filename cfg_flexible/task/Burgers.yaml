@@ -1,0 +1,31 @@
+# @package _global_
+defaults:
+  - default_conf
+equation: Burgers
+train:
+  unrolling: 0
+wandb:
+  project: Burgers
+
+datasize: 10000
+testsize: 1000
+
+model:
+  n_modes: [256]
+
+dataset:
+  train_path: data/Burgers_train_10000.h5
+  test_path: data/Burgers_test_1000.h5
+
+# dataset:
+#   train_path: data_large/Burgers_train_10000_default.h5
+#   test_path: data_large/Burgers_test_10000_default.h5
+
+
+generate_data:
+  L: 6.28
+  nt: 180
+  end_time: 18.0
+  nu: 0.01
+  atol: 1e-6
+  rtol: 1e-8

@@ -12,7 +12,7 @@ import time
 from typing import Tuple
 from copy import copy
 from datetime import datetime
-from PDEs import PDE, KdV, KS, nKdV, cKdV, Heat
+from PDEs_candy import PDE, KdV, KS, nKdV, cKdV, Heat, Burgers
 from simulation.ns import NS
 
 from torchdiffeq import odeint
@@ -83,25 +83,14 @@ def params(pde: PDE, batch_size: int, device: torch.cuda.device="cpu") -> Tuple[
         np.ndarray: phase shift
         np.ndarray: space dependent frequency
     """
-    A = np.random.rand(1, pde.N) - 0.5
+    A = (np.random.rand(1, pde.N) - 0.5) * pde.initial_condition_scale
     phi = 2.0 * np.pi * np.random.rand(1, pde.N)
     l = np.random.randint(pde.lmin, pde.lmax, (1, pde.N))
     return A, phi, l
 
+def inv_cole_hopf(psi0,pde):
+    return torch.exp(pde.psdiff(torch.tensor(psi0,device=pde.psdiff.device)/(2 * pde.nu),order = -1,dim=1))
 
-# def inv_cole_hopf(psi0: np.ndarray, scale: float = 10.) -> np.ndarray:
-#     """
-#     Inverse Cole-Hopf transformation to obtain Heat equation out of initial conditions of Burgers' equation.
-#     Args:
-#         psi0 (np.ndarray): Burgers' equation (at arbitrary timestep) which gets transformed into Heat equation
-#         scale (float): scaling factor for transformation
-#     Returns:
-#         np.ndarray: transformed Heat equation
-#     """
-#     psi0 = psi0 - np.amin(psi0)
-#     psi0 = scale * 2 * ((psi0 / np.amax(psi0)) - 0.5)
-#     psi0 = np.exp(psi0)
-#     return psi0
 
 @torch.no_grad()
 def generate_trajectories(pde: PDE,
@@ -237,6 +226,8 @@ def generate_data(experiment: str,
         _generate_data_ps(experiment, starting_time, end_time, L, nx, nt, nt_effective, num_samples_train, num_samples_valid, num_samples_test, batch_size, device, nu, cfg)
     elif experiment in ['NS']:
         _generate_data_sim(experiment, starting_time, end_time, L, nx, nt, nt_effective, num_samples_train, num_samples_valid, num_samples_test, batch_size, device, nu, cfg)
+    else:
+        raise Exception("Wrong experiment")
 
 def _generate_data_sim(experiment: str,
                   starting_time : float,
@@ -261,42 +252,57 @@ def _generate_data_sim(experiment: str,
              ("test", num_samples_test > 0, num_samples_test)}
     check_files(experiment, files)
 
+    if experiment == 'NS':
+        assert nt == cfg.generate_data.nt
+        dt = cfg.generate_data.end_time / (nt - 1)
+        dt_sim = cfg.generate_data.dt
+        vis = cfg.generate_data.vis
+        fid = cfg.generate_data.nx
+        sim = NS(tmax=dt, dt=dt_sim, vis=vis, fid=fid, device=device)
+    else:
+        raise Exception("Wrong experiment")
+    
     for mode, _, num_samples in files:
         if num_samples > 0:
-            if experiment == 'NS':
-                sim = NS()
-            else:
-                raise Exception("Wrong experiment")
-        
+            
             num_batches = int(np.ceil(num_samples / batch_size))
 
-            for batch_idx in range(num_batches):
+            pde_string = experiment
+            print(f'Equation: {pde_string}')
+            print(f'Mode: {mode}')
+            print(f'Number of samples: {num_samples}')
 
+            sys.stdout.flush()
+
+            save_name = "data/" + "_".join([pde_string, mode])
+            save_name = save_name + "_" + str(num_samples)
+            h5f = h5py.File("".join([save_name, '.h5']), 'a')
+            dataset = h5f.create_group(mode)
+            h5f_u = {}
+            h5f_u = dataset.create_dataset(f'pde', (num_samples, nt_effective, 1, nx, nx), dtype=float)
+
+            for batch_idx in range(num_batches):
                 n_data = min((batch_idx+1) * batch_size,num_samples) - batch_idx * batch_size
                 if n_data == 0:
                     continue
-                u0_list = []
+                params = torch.randn(n_data, nx**2 * 2).to(device)
+                u0 = sim.query_in(params).unsqueeze(1) # (n_data, 1, nx, nx)
                 try:
-                    u0 = sim.query_in()
-                        
-                
-                    spectral_method = pde.pseudospectral_reconstruction_batch
-                            
-                    u0 = torch.tensor(np.stack(u0_list,axis=0)).to(device)
-                    t = torch.tensor(t).to(device)
-
-                    solved_trajectory = odeint(func=spectral_method,
-                                                t=t,
-                                                y0=u0,
-                                                method=cfg.generate_data.solver,
-                                                atol=atol,
-                                                rtol=rtol)
+                    traj = [u0]
+                    for i in range(nt - 1):
+                        traj.append(sim.query_out(traj[-1].squeeze(1)).unsqueeze(1)) # (n_data, 1, nx, nx)
+                    traj = torch.stack(traj, dim=1) # (n_data, nt, 1, nx, nx)
                 except AssertionError:
-                    print(f'An error occured - possibly an underflow. re-running {trial}/5')
-
-            
-
-
+                    raise Exception('An error occured - possibly an underflow.')
+                traj = traj[:, -nt_effective:] # (n_data, nt_effective, 1, nx, nx)
+                traj = traj.cpu()
+                h5f_u[batch_idx * batch_size:batch_idx * batch_size+n_data] = traj
+        
+            print()
+            print("Data saved")
+            print()
+            print()
+            h5f.close()
 
 def _generate_data_ps(experiment: str,
                   starting_time : float,
@@ -474,23 +480,15 @@ def _get_pde_object(cfg):
                    nt_effective=nt_effective,
                    L=L,
                    device=device)
-    # elif experiment == 'Burgers':
-    #     pde = Burgers(tmin=starting_time,
-    #              tmax=end_time,
-    #              grid_size=(nt, nx),
-    #              nt_effective=nt_effective,
-    #              nu=cfg.generate_data.nu,
-    #              device=device)
-
-    # elif experiment == 'Burgers':
-    #     # Heat equation is generated; afterwards trajectories are transformed via Cole-Hopf transformation.
-    #     # L is not set for Burgers equation, since it is very sensitive. Default value is 2*math.pi.
-    #     pde = Burgers(tmin=starting_time,
-    #              tmax=end_time,
-    #              grid_size=(nt, nx),
-    #              nt_effective=nt_effective,
-    #              nu=cfg.generate_data.nu,
-    #              device=device)
+    elif experiment == 'Burgers':
+        # Heat equation is generated; afterwards trajectories are transformed via Cole-Hopf transformation.
+        # L is not set for Burgers equation, since it is very sensitive. Default value is 2*math.pi.
+        pde = Burgers(tmin=starting_time,
+                 tmax=end_time,
+                 grid_size=(nt, nx),
+                 nt_effective=nt_effective,
+                 nu=cfg.generate_data.nu,
+                 device=device)
     elif experiment == 'nKdV':
         pde = nKdV(tmin=starting_time,
                   tmax=end_time,
@@ -514,9 +512,49 @@ def _get_pde_object(cfg):
 
 @torch.no_grad()
 def evolve(u0, cfg, t0=0, timesteps=1, dt=None):
-    if cfg.equation in ["KdV", "KS", "Heat", "nKdV", "cKdV", "GrayScott"]:
+    if cfg.equation in ["KdV", "KS", "Heat", "nKdV", "cKdV", "Burgers"]:
         return _evolve_ps(u0, cfg, t0, timesteps, dt)
+    elif cfg.equation in ["NS"]:
+        return _evolve_sim(u0, cfg, t0, timesteps, dt)
+    else:
+        raise Exception("Wrong experiment")
 
+def _evolve_sim(u0, cfg, t0=0, timesteps=1, dt=None):
+    # u0 has shape (n_data, 1, nx, nx)
+    device = cfg.device
+    batch_size = cfg.generate_data.batch_size
+
+    if cfg.equation != 'NS':
+        raise Exception("Wrong experiment")
+
+    nt = cfg.generate_data.nt
+    end_time = cfg.generate_data.end_time
+    if dt is None:
+        dt = end_time / (nt - 1) * (130 / (cfg.nt - 1))
+    
+    nx = cfg.generate_data.nx
+    vis = cfg.generate_data.vis
+    fid = cfg.generate_data.nx
+    sim = NS(tmax=dt, dt=cfg.generate_data.dt, vis=vis, fid=fid, device=device)
+
+    u0 = u0.to(device)
+    n_data = u0.shape[0]
+    solution = []
+
+    for batch_idx, u in enumerate(u0.split(batch_size)):
+        try:
+            traj = [u]
+            for i in range(timesteps):
+                traj.append(sim.query_out(traj[-1].squeeze(1)).unsqueeze(1))  # (n_data, 1, nx, nx)
+            traj = torch.stack(traj, dim=1)  # (n_data, timesteps + 1, 1, nx, nx)
+            traj = traj[:, 1:]  # (n_data, timesteps, 1, nx, nx)
+            traj = traj.cpu()
+        except AssertionError:
+            raise Exception('An error occurred - possibly an underflow.')
+        solution.append(traj)
+
+    solution = torch.cat(solution, dim=0)  # (n_data, timesteps, 1, nx, nx)
+    return solution  # (n_data, timesteps, 1, nx, nx)
 
 def _evolve_ps(u0, cfg, t0=0, timesteps=1, dt=None):
     # print(u0.max(), u0.min(), u0.shape)
@@ -555,7 +593,8 @@ def _evolve_ps(u0, cfg, t0=0, timesteps=1, dt=None):
             # T = pde.tmax
             # L = pde.L
 
-            
+            if pde_string == 'Burgers':
+                u = inv_cole_hopf(u, pde)
             # t = np.linspace(0, T, nt)
             # x = np.linspace(0, (1 - 1.0 / nx) * L, nx)
         

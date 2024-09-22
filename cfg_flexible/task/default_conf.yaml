@@ -18,6 +18,8 @@ initial_selection_method: random # random, variance, stochastic, lcmd
 post_selection_method: all # initial_ vs flexible_, ...
 mean_field: False
 cheat: False
+filter: 10
+
 # post_batch_size: 32
 
 # optimization_method: greedy # greedy, individual
@@ -36,6 +38,8 @@ generate_data:
   batch_size: 4096
   nu: 
   starting_time: 0
+  atol: 
+  rtol: 
 
 
 
