@@ -12,7 +12,7 @@ import time
 from typing import Tuple
 from copy import copy
 from datetime import datetime
-from PDEs import PDE, KdV, KS, nKdV, cKdV, Heat
+from PDEs import PDE, KdV, KS, nKdV, cKdV, Heat, Burgers
 from simulation.ns import NS
 
 from torchdiffeq import odeint
@@ -83,13 +83,15 @@ def params(pde: PDE, batch_size: int, device: torch.cuda.device="cpu") -> Tuple[
         np.ndarray: phase shift
         np.ndarray: space dependent frequency
     """
-    A = np.random.rand(1, pde.N) - 0.5
+    A = (np.random.rand(1, pde.N) - 0.5) * pde.initial_condition_scale
     phi = 2.0 * np.pi * np.random.rand(1, pde.N)
     l = np.random.randint(pde.lmin, pde.lmax, (1, pde.N))
     return A, phi, l
 
 def inv_cole_hopf(psi0,pde):
-    return torch.exp(pde.psdiff(torch.tensor(psi0,device=pde.psdiff.device)/(2 * pde.nu),order = -1,dim=0)).cpu().numpy()
+    return torch.exp(pde.psdiff((psi0)/(2 * pde.nu),order = -1,dim=1))
+    # return torch.exp(pde.psdiff(torch.tensor(psi0,device=pde.psdiff.device)/(2 * pde.nu),order = -1,dim=1))
+
 
 @torch.no_grad()
 def generate_trajectories(pde: PDE,
@@ -164,16 +166,14 @@ def generate_trajectories(pde: PDE,
                     # Initial condition of the equation at end
                     u0 = initial_conditions(A, omega, l, L)(x[:, None])
 
-                    # We use the initial condition of Burgers' equation and inverse Cole-Hopf transform it into the Heat equation
-                    # if pde_string == 'Burgers':
-                    #     u0 = inv_cole_hopf(u0)
-
                     u0_list.append(u0)
                     
             
                 spectral_method = pde.pseudospectral_reconstruction_batch
                         
                 u0 = torch.tensor(np.stack(u0_list,axis=0)).to(device)
+                if pde_string == 'Burgers':
+                    u0 = inv_cole_hopf(u0, pde)
                 t = torch.tensor(t).to(device)
 
                 solved_trajectory = odeint(func=spectral_method,
@@ -189,8 +189,8 @@ def generate_trajectories(pde: PDE,
         time_end = time.time()
 
         sol = solved_trajectory.permute(1,0,2)[:,-pde.nt_effective:]
-        # if pde_string == 'Burgers':
-        #     # sol = pde.to_burgers(sol.reshape(-1,nx)).reshape(*sol.shape)
+        if pde_string == 'Burgers':
+            sol = pde.to_burgers(sol.reshape(-1,nx)).reshape(*sol.shape)
         #     sol = torch.tensor(cole_hopf(sol.cpu().numpy()))
             
         sol = sol.cpu()
@@ -365,24 +365,15 @@ def _generate_data_ps(experiment: str,
                     nu=nu,
                     L=L,
                     device=device)
-    # elif experiment == 'Burgers':
-    #     pde = Burgers(tmin=starting_time,
-    #              tmax=end_time,
-    #              grid_size=(nt, nx),
-    #              nt_effective=nt_effective,
-    #              nu=nu,
-    #              device=device)
-        
-
-    # elif experiment == 'Burgers':
-    #     # Heat equation is generated; afterwards trajectories are transformed via Cole-Hopf transformation.
-    #     # L is not set for Burgers equation, since it is very sensitive. Default value is 2*math.pi.
-    #     pde = Burgers(tmin=starting_time,
-    #              tmax=end_time,
-    #              grid_size=(nt, nx),
-    #              nt_effective=nt_effective,
-    #              nu=nu,
-    #              device=device)
+    elif experiment == 'Burgers':
+        # Heat equation is generated; afterwards trajectories are transformed via Cole-Hopf transformation.
+        # L is not set for Burgers equation, since it is very sensitive. Default value is 2*math.pi.
+        pde = Burgers(tmin=starting_time,
+                 tmax=end_time,
+                 grid_size=(nt, nx),
+                 nt_effective=nt_effective,
+                 nu=nu,
+                 device=device)
     elif experiment == 'nKdV':
         pde = nKdV(tmin=starting_time,
                   tmax=end_time,
@@ -479,23 +470,15 @@ def _get_pde_object(cfg):
                    nt_effective=nt_effective,
                    L=L,
                    device=device)
-    # elif experiment == 'Burgers':
-    #     pde = Burgers(tmin=starting_time,
-    #              tmax=end_time,
-    #              grid_size=(nt, nx),
-    #              nt_effective=nt_effective,
-    #              nu=cfg.generate_data.nu,
-    #              device=device)
-
-    # elif experiment == 'Burgers':
-    #     # Heat equation is generated; afterwards trajectories are transformed via Cole-Hopf transformation.
-    #     # L is not set for Burgers equation, since it is very sensitive. Default value is 2*math.pi.
-    #     pde = Burgers(tmin=starting_time,
-    #              tmax=end_time,
-    #              grid_size=(nt, nx),
-    #              nt_effective=nt_effective,
-    #              nu=cfg.generate_data.nu,
-    #              device=device)
+    elif experiment == 'Burgers':
+        # Heat equation is generated; afterwards trajectories are transformed via Cole-Hopf transformation.
+        # L is not set for Burgers equation, since it is very sensitive. Default value is 2*math.pi.
+        pde = Burgers(tmin=starting_time,
+                 tmax=end_time,
+                 grid_size=(nt, nx),
+                 nt_effective=nt_effective,
+                 nu=cfg.generate_data.nu,
+                 device=device)
     elif experiment == 'nKdV':
         pde = nKdV(tmin=starting_time,
                   tmax=end_time,
@@ -579,6 +562,7 @@ def _evolve_ps(u0, cfg, t0=0, timesteps=1, dt=None):
     end_time = cfg.generate_data.end_time
     if dt is None:
         dt = end_time / (nt-1) * (130/(cfg.nt-1))
+        # dt = end_time / (nt-1)
     nx = pde.grid_size[1]
     
     # The field u, the coordinations (xcoord, tcoord) and dx, dt are saved
@@ -600,7 +584,8 @@ def _evolve_ps(u0, cfg, t0=0, timesteps=1, dt=None):
             # T = pde.tmax
             # L = pde.L
 
-            
+            if pde_string == 'Burgers':
+                u = inv_cole_hopf(u, pde)
             # t = np.linspace(0, T, nt)
             # x = np.linspace(0, (1 - 1.0 / nx) * L, nx)
         
@@ -616,8 +601,8 @@ def _evolve_ps(u0, cfg, t0=0, timesteps=1, dt=None):
             sol = solved_trajectory.permute(1,0,2) # (n_data, nt, nx)
             sol = sol[:, 1:]
 
-            # if pde_string == 'Burgers':
-            #     sol = torch.tensor(cole_hopf(sol.cpu().numpy()))
+            if pde_string == 'Burgers':
+                sol = pde.to_burgers(sol.reshape(-1,nx)).reshape(*sol.shape)
             sol = sol.cpu() # (n_data, nt, nx)
         except AssertionError:
             raise Exception('An error occured - possibly an underflow.')
