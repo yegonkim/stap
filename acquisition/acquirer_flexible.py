@@ -123,181 +123,125 @@ class Acquirer:
         else:
             raise ValueError(f"Initial selection method {selection_method} not implemented")
 
-    @torch.no_grad()
-    def initial_method(self, index, budget):
-        selection_method = self.post_selection_method
-        L = self.L
-        # print(index)
-        X = self.pool[index] # [1, nx]
-        X = X.unsqueeze(0)
-        bs = X.shape[0] # 1
+    # @torch.no_grad()
+    # def initial_method(self, index, budget):
+    #     selection_method = self.post_selection_method
+    #     L = self.L
+    #     # print(index)
+    #     X = self.pool[index] # [1, nx]
+    #     X = X.unsqueeze(0)
+    #     bs = X.shape[0] # 1
 
-        if "prior" in selection_method.split("_"):
-            scores = self._compute_variance_prior(X) # [1, nt]
-        elif "direct" in selection_method.split("_"):
-            scores = self._compute_variance_direct(X, mode=self.eer_mode) # [1, nt]
-        else:
-            raise ValueError(f"Selection method {selection_method} not implemented.")
+    #     if "prior" in selection_method.split("_"):
+    #         scores = self._compute_variance_prior(X) # [1, nt]
+    #     elif "direct" in selection_method.split("_"):
+    #         scores = self._compute_variance_direct(X, mode=self.eer_mode) # [1, nt]
+    #     else:
+    #         raise ValueError(f"Selection method {selection_method} not implemented.")
 
-        scores=scores.cpu() # [1, L]
-        scores[scores == float('inf')] = -np.inf
-        scores[scores.isnan()] = -np.inf
+    #     scores=scores.cpu() # [1, L]
+    #     scores[scores == float('inf')] = -np.inf
+    #     scores[scores.isnan()] = -np.inf
 
-        costs = torch_expand(torch.arange(L)[None], 0, bs) + 1 # [1, L]
-        utility = scores / costs # [1, L]
+    #     costs = torch_expand(torch.arange(L)[None], 0, bs) + 1 # [1, L]
+    #     utility = scores / costs # [1, L]
 
-        # print(utility)
-        utility[costs > budget] = -np.inf
+    #     # print(utility)
+    #     utility[costs > budget] = -np.inf
 
-        if "max" in selection_method.split("_"):
-            max_indices = torch.argmax(utility.flatten())
-        elif "stochastic" in selection_method.split("_"):
-            utility_temp = utility.clone()
-            utility_temp[utility_temp < 0] = 0
-            utility_temp = torch.log(utility_temp)
-            utility_temp = utility_temp * float(selection_method.split("_")[-1])
-            gumbel_noise = -torch.log(-torch.log(torch.rand_like(utility_temp)))
-            utility_noisy = utility_temp + gumbel_noise
-            max_indices = torch.argmax(utility_noisy.flatten())
-        index = max_indices // L
-        time = max_indices % L # an index in [0, L)
-        time += 1 # an index in [1, L]
+    #     if "max" in selection_method.split("_"):
+    #         max_indices = torch.argmax(utility.flatten())
+    #     elif "stochastic" in selection_method.split("_"):
+    #         utility_temp = utility.clone()
+    #         utility_temp[utility_temp < 0] = 0
+    #         utility_temp = torch.log(utility_temp)
+    #         utility_temp = utility_temp * float(selection_method.split("_")[-1])
+    #         gumbel_noise = -torch.log(-torch.log(torch.rand_like(utility_temp)))
+    #         utility_noisy = utility_temp + gumbel_noise
+    #         max_indices = torch.argmax(utility_noisy.flatten())
+    #     index = max_indices // L
+    #     time = max_indices % L # an index in [0, L)
+    #     time += 1 # an index in [1, L]
         
-        S = torch.zeros(1,L).bool()
-        S[0,:time] = True
-        return S
+    #     S = torch.zeros(1,L).bool()
+    #     S[0,:time] = True
+    #     return S
 
     @torch.no_grad()
-    def flexible_method(self, index, budget):
+    def flexible_method(self, indices):
         selection_method = self.post_selection_method
         L = self.L
-        X = self.pool[index] # [1, nx]
-        # print(X)
-        X = X.unsqueeze(0)
-        bs = X.shape[0] # 1
+        bs = len(indices)
+        X = self.pool[tuple(indices)] # [bs, nx]
+        assert X.shape[0] == bs
+        p_proposal = self.cfg.p_proposal
+        num_proposal = self.cfg.num_proposal
+        filter_method = self.cfg.filter_method
 
-        feasibility = self._check_feasibility(X)
-        if feasibility:
-            print('filtered')
-            return torch.ones(1,L).bool() # pick all
+        ood = self._check_feasibility(X) # [bs]
 
-        max_L = min(L, budget)
-
-        if "prior" in selection_method.split("_"):
-            scores = self._compute_variance_prior_wo_cumsum(X) # [nt-1]
-            # print(scores)
-            S = torch.ones(1,L).bool()
-            S[:,max_L:] = False
-            for t in range(max_L-1, -1, -1): # [L-1, 0]
-                if S.sum() == 1:
-                    break
-                score = (scores * S).sum(dim=1) / S.sum(dim=1)
-                S_new = S.clone()
-                S_new[0,t] = False
-                new_score = (scores * S_new).sum(dim=1) / S_new.sum(dim=1)
+        S = torch.ones(bs,L).bool()
+        # S = torch.ones(bs,L).bool().to(self.device)
+        S[:,L:] = False
+        a = EER_Calculator(self.ensemble, X, L, self.eval_batch_size, self.device, mode=self.eer_mode) # mean field eer calculator
+        scores = a(S) / S.sum(dim=1) # [bs]
+        for i in range(num_proposal):
+            S_new = S.clone()
+            # change = torch.bernoulli(torch.ones(bs,L) * p_proposal).bool().to(self.device)
+            change = torch.bernoulli(torch.ones(bs,L) * p_proposal).bool()
+            S_new = S_new ^ change
+            new_scores = a(S_new) / S_new.sum(dim=1) # [bs]
+            for j in range(bs):
                 if "max" in selection_method.split("_"):
-                    if new_score > score:
-                        S = S_new
+                    if new_scores[j] > scores[j]:
+                        S[j] = S_new[j]
+                        scores[j] = new_scores[j]
                 elif "stochastic" in selection_method.split("_"):
-                    if torch.rand(1) < (new_score / (new_score + score).pow(float(selection_method.split("_")[-1]))).cpu():
+                    # use metropolis-hastings
+                    if torch.rand(1) < min(1, (new_scores[j] / scores[j]).cpu()**float(selection_method.split("_")[-1])):
                         S = S_new
-        elif "approx" in selection_method.split("_"):
-            scores = self._compute_variance_prior_wo_cumsum(X).squeeze(0) # [nt-1]
-            scores = scores.cpu()
-            # append 0 at the start
-            scores = torch.cat([torch.zeros(1), scores], dim=0) # [nt]
-            scores_diff = scores[1:] - scores[:-1] # [nt-1]
-            scores_diff_weighted = scores_diff * torch.arange(L, 0, -1).float() # [nt-1]
-            sorted_indices = torch.argsort(scores_diff_weighted, descending=True) # [nt-1]
-            sorted_scores = scores_diff_weighted[sorted_indices]
-            candidate_scores = sorted_scores.cumsum(dim=0) # [nt-1]
-            candidate_scores = (candidate_scores) / torch.arange(1, L+1).float() # [nt-1]
-            candidate_scores[candidate_scores < 0] = 0
-            if "max" in selection_method.split("_"):
-                best_index = torch.argmax(candidate_scores)
-            elif "stochastic" in selection_method.split("_"):
-                candidate_scores = candidate_scores / candidate_scores.sum()
-                candidate_scores = candidate_scores**float(selection_method.split("_")[-1])
-                best_index = torch.multinomial(candidate_scores, 1).item()
-            else:
-                raise ValueError(f"Selection method {selection_method} not implemented.")
-            S = torch.zeros(1,L).bool()
-            S[:,sorted_indices[:best_index+1]] = True
-        elif "direct" in selection_method.split("_"):
-            S = torch.ones(1,L).bool()
-            S[:,max_L:] = False
-            a = EER_Calculator(self.ensemble, X, L, self.eval_batch_size, self.device, mode=self.eer_mode) # mean field eer calculator
-            score = a(S) / S.sum()
-            for i in range(10):
-                S_new = S.clone()
-                change = torch.bernoulli(torch.ones(1,L) * 0.1).bool()
-                S_new = S_new ^ change
-                new_score = a(S_new) / S_new.sum()
-                if "max" in selection_method.split("_"):
-                    if new_score > score:
-                        S = S_new
-                        score = new_score
-                elif "stochastic" in selection_method.split("_"):
-                    # use mcmc
-                    if torch.rand(1) < min(1, (new_score / score).cpu()**float(selection_method.split("_")[-1])):
-                        S = S_new
-                        score = new_score
-            # for t in range(max_L-1, -1, -1): # [L-1, 0]
-            #     if S.sum() == 1:
-            #         break
-            #     score = a(S) / S.sum()
-            #     S_new = S.clone()
-            #     S_new[0,t] = False
-            #     new_score = a(S_new) / S_new.sum()
-            #     if "max" in selection_method.split("_"):
-            #         if new_score > score:
-            #             S = S_new
-            #     elif "stochastic" in selection_method.split("_"):
-            #         if torch.rand(1) < (new_score / (new_score + score).pow(float(selection_method.split("_")[-1]))).cpu():
-            #             S = S_new
-        else:
-            raise ValueError(f"Selection method {selection_method} not implemented.")
+                        scores[j] = new_scores[j]
+
+        if filter_method == 'all':
+            S[ood, :] = True
+        elif filter_method == 'ignore':
+            S[ood, :] = False
+            
         
         return S
 
     @torch.no_grad()
-    def post_selection(self, index, budget):
+    def post_selection(self, indices):
         selection_method = self.post_selection_method
         L = self.L
+        bs = len(indices)
         if selection_method == 'all':
-            S = torch.ones(1,L).bool()
+            S = torch.ones(bs,L).bool()
         elif 'initial' in selection_method.split('_'):
-            if 'p' in selection_method.split('_'):
-                p = float(selection_method.split('_')[-1])
-                S_temp = torch.bernoulli(torch.ones(L) * p).bool()
-                S = torch.zeros(L).bool()
-                S[:S_temp.sum()] = True
-                if S.sum() > budget:
-                    S = torch.zeros(L).bool()
-                    S[:budget] = True
-                S = S[None]
-            else:
-                S = self.initial_method(index, budget)
+            raise NotImplementedError
+            # if 'p' in selection_method.split('_'):
+            #     p = float(selection_method.split('_')[-1])
+            #     S_temp = torch.bernoulli(torch.ones(L) * p).bool()
+            #     S = torch.zeros(L).bool()
+            #     S[:S_temp.sum()] = True
+            #     if S.sum() > budget:
+            #         S = torch.zeros(L).bool()
+            #         S[:budget] = True
+            #     S = S[None]
+            # else:
+            #     S = self.initial_method(index, budget)
         elif 'flexible' in selection_method.split('_'):
             if 'p' in selection_method.split('_'):
                 p = float(selection_method.split('_')[-1])
                 S = torch.bernoulli(torch.ones(L) * p).bool()
-                if S.sum() > budget:
-                    S = torch.zeros(L).bool()
-                    S[torch.multinomial(torch.ones(L), budget)] = True
                 S = S[None]
             else:
-                S = self.flexible_method(index, budget)
+                S = self.flexible_method(indices)
         else:
             raise ValueError(f"Post selection method {selection_method} not implemented.")
+        assert S.shape == (bs, L)
         return S
     
-    @torch.no_grad()
-    def flexible_selection(self, budget):
-        selection_method = self.flexible_selection_method
-        L = self.L
-        pass
-            
 
     def select(self, budget):
         self.initialize_selection()
@@ -305,20 +249,29 @@ class Acquirer:
         total_cost = 0
         selected = {}
         while total_cost < budget:
-            top_index = self.get_next()
-            S = self.post_selection(top_index, budget=budget-total_cost) # [1, L]
+            top_indices = []
+            for _ in range(self.eval_batch_size):
+                top_index = self.get_next()
+                top_indices.append(top_index)
+            S = self.post_selection(top_indices) # [eval_bs, L]
+
             if total_cost + S.sum() > budget:
                 # pick just the first budget - total_cost True indices of S
-                S = S.squeeze()
-                S_true = S.nonzero()
-                S_temp = torch.zeros_like(S)
-                S_temp[S_true[:budget-total_cost]] = True
-                S = S_temp.unsqueeze(0)
+                true_indices = S.nonzero()
+                S_temp = torch.zeros_like(S).bool()
+                for i in range(budget-total_cost):
+                    S_temp[tuple(true_indices[i])] = True
+                S = S_temp # [eval_bs, L]
             total_cost += S.sum()
             assert total_cost <= budget
-            assert top_index not in selected
-            selected[top_index] = S
+            for top_index, S_i in zip(top_indices, S):
+                assert top_index not in selected
+                if S_i.sum() == 0:
+                    continue
+                selected[top_index] = S_i.unsqueeze(0).cpu() # [1, L]
+        print(f"{len(selected)} samples selected.")
         print(selected)
+        
         return selected
 
     ### Acquisition functions
@@ -339,6 +292,7 @@ class Acquirer:
     @torch.no_grad()
     def _check_feasibility(self, X):
         X = X.to(self.device) # [bs, 1, nx]
+        bs = X.shape[0]
         ensemble = self.ensemble
         
         feasibility_list = []
@@ -346,7 +300,7 @@ class Acquirer:
             model.eval()
             pred = trajectory_model(split_model(model, self.eval_batch_size), self.L)(X)
             feasibility = torch.logical_or(pred > self.max_filter*self.filter, pred < self.min_filter*self.filter)
-            feasibility = feasibility.any(dim=tuple(range(1, feasibility.dim())))
+            feasibility = feasibility.any(dim=tuple(range(1, feasibility.dim()))) # [bs]
             feasibility_list.append(feasibility)
         feasibility = torch.stack(feasibility_list, dim=1).any(dim=1) # [bs]
         assert feasibility.shape == (X.shape[0],)

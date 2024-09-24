@@ -18,7 +18,11 @@ initial_selection_method: random # random, variance, stochastic, lcmd
 post_selection_method: all # initial_ vs flexible_, ...
 mean_field: False
 cheat: False
-filter: 10
+
+filter: 2
+filter_method: "all" # all, ignore
+p_proposal: 0.1
+num_proposal: 10
 
 # post_batch_size: 32
 
@@ -47,7 +51,7 @@ comment:
 
 seed: 1
 device: cuda
-eval_batch_size: 256
+eval_batch_size: 128
 
 train:
   unrolling: 0

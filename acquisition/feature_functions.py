@@ -84,10 +84,18 @@ def get_features_hidden_trajectory(X, ensemble, num_steps, device):
                 activations[name] = output.detach()
             return hook
 
-        if isinstance(model, normalized_model) or isinstance(model, normalized_residual_model):
-            model.model.projection.fcs[0].register_forward_hook(get_activation('hidden'))
-        else:
-            model.projection.fcs[0].register_forward_hook(get_activation('hidden'))
+        # if isinstance(model, normalized_model) or isinstance(model, normalized_residual_model):
+        #     model.model.projection.fcs[0].register_forward_hook(get_activation('hidden'))
+        # else:
+        #     model.projection.fcs[0].register_forward_hook(get_activation('hidden'))
+        
+        model_to_hook = model
+        for _ in range(5):
+            if hasattr(model_to_hook, 'projection'):
+                model_to_hook.projection.fcs[0].register_forward_hook(get_activation('hidden'))
+            else:
+                model_to_hook = model_to_hook.model
+
         ######
 
 

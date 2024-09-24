@@ -4,6 +4,7 @@ import numpy as np
 from neuralop.models import FNO, TFNO
 from tqdm import tqdm
 import random
+from itertools import islice
 
 import argparse
 import time
@@ -90,13 +91,6 @@ class Pool_with_traj:
 
 def run_experiment(cfg):
     wandb.define_metric("datasize")
-    # logarithmic scale
-    wandb.define_metric("l2", step_metric="datasize")
-    wandb.define_metric("rel_l2", step_metric="datasize")
-    wandb.define_metric("mse", step_metric="datasize")
-    wandb.define_metric("l2_trajectory", step_metric="datasize")
-    wandb.define_metric("rel_l2_trajectory", step_metric="datasize")
-    wandb.define_metric("mse_trajectory", step_metric="datasize")
 
     unrolling = cfg.train.unrolling
     nt = cfg.nt
@@ -114,8 +108,70 @@ def run_experiment(cfg):
     num_channels = Traj_dataset.traj_train_32.shape[2]
     assert len(cfg.model.n_modes) == Traj_dataset.traj_train_32.ndim - 3 # number of spatial dimensions
 
+    # Final metrics
+    l2_list = []
+    rel_l2_list = []
+
+    # def train(Y, unrolling=0, acquire_step=0):
+    #     # assert unrolling == 0
+    #     # Y as a list of continuous trajectories
+    #     # model = TFNO(n_modes=tuple(cfg.model.n_modes), hidden_channels=64,
+    #     #             in_channels=num_channels, out_channels=num_channels,
+    #     #             factorization='tucker', implementation='factorized', rank=0.05)
+        
+    #     model = FNO(n_modes=tuple(cfg.model.n_modes), hidden_channels=64,
+    #                 in_channels=num_channels, out_channels=num_channels)
+
+    #     model = model.to(device)
+    #     # model = normalized_model(model, Traj_dataset.mean, Traj_dataset.std, Traj_dataset.mean, Traj_dataset.std)
+    #     model = normalized_residual_model(model, Traj_dataset.mean, Traj_dataset.std)
+
+    #     if len(Y) == 0:
+    #         return model
+
+    #     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    #     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs)
+    #     criterion = torch.nn.MSELoss()
+
+    #     inputs, outputs = [], []
+    #     for traj in Y:
+    #         if len(traj) == 1: # skip the trajectory with only one point
+    #             continue
+    #         inputs.append(traj[:-1])
+    #         outputs.append(traj[1:])
+    #     inputs = torch.cat(inputs, dim=0)
+    #     outputs = torch.cat(outputs, dim=0)
+    #     assert inputs.shape[0] == outputs.shape[0]
+    #     assert inputs.shape[1] == num_channels
+    #     print('Datasize:', inputs.shape[0])
+        
+    #     dataset = torch.utils.data.TensorDataset(inputs, outputs)
+    #     dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+    #     model.train()
+    #     for epoch in range(epochs):
+    #         model.train()
+    #         # max_unrolling = epoch if epoch <= unrolling else unrolling
+    #         # unrolling_list = [r for r in range(max_unrolling + 1)]
+
+    #         total_loss = 0
+    #         for x, y in dataloader:
+    #             optimizer.zero_grad()
+    #             x, y = x.to(device), y.to(device)
+                
+    #             pred = model(x)
+    #             loss = criterion(pred, y)
+
+    #             # loss = torch.sqrt(loss)
+    #             loss.backward()
+    #             optimizer.step()
+    #             total_loss += loss.item()
+    #         scheduler.step()
+    #         # wandb.log({f'train/loss_{acquire_step}': total_loss})
+    #     return model
+
+
     def train(Y, unrolling=0, acquire_step=0):
-        assert unrolling == 0
         # Y as a list of continuous trajectories
         # model = TFNO(n_modes=tuple(cfg.model.n_modes), hidden_channels=64,
         #             in_channels=num_channels, out_channels=num_channels,
@@ -135,36 +191,52 @@ def run_experiment(cfg):
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs)
         criterion = torch.nn.MSELoss()
 
-        inputs, outputs = [], []
+        inputs, outputs, unrolls = [], [], []
         for traj in Y:
-            if len(traj) == 1: # skip the trajectory with only one point
+            if len(traj) == 1:  # Skip trajectories with only one point
                 continue
-            inputs.append(traj[:-1])
-            outputs.append(traj[1:])
-        inputs = torch.cat(inputs, dim=0)
-        outputs = torch.cat(outputs, dim=0)
+            traj_len = len(traj)
+            for t in range(traj_len - 1):
+                for r in range(unrolling+1):
+                    if t + (r + 1) < traj_len:
+                        inputs.append(traj[t])
+                        outputs.append(traj[t + (r + 1)])
+                        unrolls.append(r)
+
+        inputs = torch.stack(inputs, dim=0) # [datasize, 1, nx]
+        outputs = torch.stack(outputs, dim=0) # [datasize, 1, nx]
+        unrolls = torch.tensor(unrolls) # [datasize]
+
+        iter_per_epoch = len(inputs[unrolls == 0]) // batch_size + 1
+        print(iter_per_epoch)
+
         assert inputs.shape[0] == outputs.shape[0]
         assert inputs.shape[1] == num_channels
         print('Datasize:', inputs.shape[0])
-        
-        dataset = torch.utils.data.TensorDataset(inputs, outputs)
+
+        dataset = torch.utils.data.TensorDataset(inputs, outputs, unrolls)
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
         model.train()
         for epoch in range(epochs):
             model.train()
-            # max_unrolling = epoch if epoch <= unrolling else unrolling
-            # unrolling_list = [r for r in range(max_unrolling + 1)]
-
             total_loss = 0
-            for x, y in dataloader:
+            for x, y, unroll in islice(dataloader, iter_per_epoch):
                 optimizer.zero_grad()
-                x, y = x.to(device), y.to(device)
+                x, y, unroll = x.to(device), y.to(device), unroll.to(device)
+                x, y, unroll = x[unroll <= epoch], y[unroll <= epoch], unroll[unroll <= epoch]
+                if len(x) == 0:
+                    continue
                 
+                # Unroll the model predictions
+                for _ in range(unroll.max()):
+                    with torch.no_grad():
+                        x[unroll > 0] = model(x[unroll > 0])
+                        unroll[unroll > 0] -= 1
+
                 pred = model(x)
                 loss = criterion(pred, y)
 
-                # loss = torch.sqrt(loss)
                 loss.backward()
                 optimizer.step()
                 total_loss += loss.item()
@@ -172,52 +244,51 @@ def run_experiment(cfg):
             # wandb.log({f'train/loss_{acquire_step}': total_loss})
         return model
 
-
     # test with teacher forcing
-    @torch.no_grad()
-    def test_tf(ensemble):
-        X_test = Traj_dataset.traj_test[:,0:(nt-1)*timestep:timestep] # [datasize, L, nx]
-        Y_test = Traj_dataset.traj_test[:,timestep:nt*timestep:timestep] # [datasize, L, nx]
-        X_test = X_test.flatten(0, 1) # [datasize*L, 1, nx]
-        Y_test = Y_test.flatten(0, 1) # [datasize*L, 1, nx]
-        # X_test = Traj_dataset.traj_test[:,0].unsqueeze(1).to(device)
-        # Y_test = Traj_dataset.traj_test[:,timestep::timestep].to(device)
+    # @torch.no_grad()
+    # def test_tf(ensemble):
+    #     X_test = Traj_dataset.traj_test[:,0:(nt-1)*timestep:timestep] # [datasize, L, nx]
+    #     Y_test = Traj_dataset.traj_test[:,timestep:nt*timestep:timestep] # [datasize, L, nx]
+    #     X_test = X_test.flatten(0, 1) # [datasize*L, 1, nx]
+    #     Y_test = Y_test.flatten(0, 1) # [datasize*L, 1, nx]
+    #     # X_test = Traj_dataset.traj_test[:,0].unsqueeze(1).to(device)
+    #     # Y_test = Traj_dataset.traj_test[:,timestep::timestep].to(device)
 
-        testset = torch.utils.data.TensorDataset(X_test, Y_test)
-        testloader = torch.utils.data.DataLoader(testset, batch_size=cfg.eval_batch_size, shuffle=False)
+    #     testset = torch.utils.data.TensorDataset(X_test, Y_test)
+    #     testloader = torch.utils.data.DataLoader(testset, batch_size=cfg.eval_batch_size, shuffle=False)
 
-        preds = []
-        for model in ensemble:
-            model.eval()
+    #     preds = []
+    #     for model in ensemble:
+    #         model.eval()
         
-            Y_test_pred = []
-            with torch.no_grad():
-                for x, y in testloader:
-                    x, y = x.to(device), y.to(device)
-                    y_pred = model(x)
-                    # print(y_pred.shape, y.shape)
-                    assert y_pred.shape == y.shape
-                    Y_test_pred.append(y_pred.cpu())
-                Y_test_pred = torch.cat(Y_test_pred, dim=0)
-            preds.append(Y_test_pred)
-        preds = torch.stack(preds, dim=0) # [ensemble_size, datasize*L, 1, nx]
+    #         Y_test_pred = []
+    #         with torch.no_grad():
+    #             for x, y in testloader:
+    #                 x, y = x.to(device), y.to(device)
+    #                 y_pred = model(x)
+    #                 # print(y_pred.shape, y.shape)
+    #                 assert y_pred.shape == y.shape
+    #                 Y_test_pred.append(y_pred.cpu())
+    #             Y_test_pred = torch.cat(Y_test_pred, dim=0)
+    #         preds.append(Y_test_pred)
+    #     preds = torch.stack(preds, dim=0) # [ensemble_size, datasize*L, 1, nx]
         
-        mean_pred = preds.mean(dim=0) # [datasize*L, 1, nx]
-        metrics = compute_metrics(Y_test, mean_pred, d=2, device=device) # (l2, rel_l2, mse)
-        metrics = torch.stack(metrics,dim=0).mean(dim=1) # [3]
-        metrics[2] = torch.sqrt(metrics[2]) # rmse
-        metrics_ensemble = metrics
+    #     mean_pred = preds.mean(dim=0) # [datasize*L, 1, nx]
+    #     metrics = compute_metrics(Y_test, mean_pred, d=2, device=device) # (l2, rel_l2, mse)
+    #     metrics = torch.stack(metrics,dim=0).mean(dim=1) # [3]
+    #     metrics[2] = torch.sqrt(metrics[2]) # rmse
+    #     metrics_ensemble = metrics
 
-        metrics_individual = []
-        for i in range(ensemble_size):
-            metrics_i = compute_metrics(Y_test, preds[i], d=2, device=device)
-            metrics_i = torch.stack(metrics_i,dim=0).mean(dim=1) # [3]
-            metrics_i[2] = torch.sqrt(metrics_i[2])
-            metrics_individual.append(metrics_i)
-        metrics_individual = torch.stack(metrics_individual, dim=0) # [ensemble_size, 3]
-        metrics_individual = metrics_individual.mean(dim=0) # [3]
+    #     metrics_individual = []
+    #     for i in range(ensemble_size):
+    #         metrics_i = compute_metrics(Y_test, preds[i], d=2, device=device)
+    #         metrics_i = torch.stack(metrics_i,dim=0).mean(dim=1) # [3]
+    #         metrics_i[2] = torch.sqrt(metrics_i[2])
+    #         metrics_individual.append(metrics_i)
+    #     metrics_individual = torch.stack(metrics_individual, dim=0) # [ensemble_size, 3]
+    #     metrics_individual = metrics_individual.mean(dim=0) # [3]
 
-        return metrics_individual, metrics_ensemble
+    #     return metrics_individual, metrics_ensemble
 
     # test: l2, rel_l2, rmse
     @torch.no_grad()
@@ -245,40 +316,81 @@ def run_experiment(cfg):
             preds.append(Y_test_pred)
         preds = torch.stack(preds, dim=0) # [ensemble_size, datasize, L, nx]
         
-        mean_pred = preds.mean(dim=0) # [datasize*L, 1, nx]
-        metrics = compute_metrics(Y_test, mean_pred, d=2, device=device) # (l2, rel_l2, mse)
-        metrics = torch.stack(metrics,dim=0).mean(dim=1) # [3]
-        metrics[2] = torch.sqrt(metrics[2]) # rmse
-        metrics_ensemble = metrics
-
-        metrics_individual = []
+        metrics = []
         for i in range(ensemble_size):
             metrics_i = compute_metrics(Y_test, preds[i], d=2, device=device)
             metrics_i = torch.stack(metrics_i,dim=0).mean(dim=1) # [3]
             metrics_i[2] = torch.sqrt(metrics_i[2])
-            metrics_individual.append(metrics_i)
-        metrics_individual = torch.stack(metrics_individual, dim=0) # [ensemble_size, 3]
-        metrics_individual = metrics_individual.mean(dim=0) # [3]
+            l2_list.append(metrics_i[0].item())
+            rel_l2_list.append(metrics_i[1].item())
+            metrics.append(metrics_i)
+        metrics = torch.stack(metrics, dim=0) # [ensemble_size, 3]
+        metrics = metrics.mean(dim=0) # [3]
 
-        return metrics_individual, metrics_ensemble
+        return metrics
+    
+    # @torch.no_grad()
+    # def test(ensemble):
+    #     X_test = Traj_dataset.traj_test[:,0] # [datasize, 1, nx]
+    #     Y_test = Traj_dataset.traj_test[:,timestep::timestep]
+
+    #     testset = torch.utils.data.TensorDataset(X_test, Y_test)
+    #     testloader = torch.utils.data.DataLoader(testset, batch_size=cfg.eval_batch_size, shuffle=False)
+        
+    #     preds = []
+    #     for model in ensemble:
+    #         model = trajectory_model(model, L)
+    #         model.eval()
+        
+    #         Y_test_pred = []
+    #         with torch.no_grad():
+    #             for x, y in testloader:
+    #                 x, y = x.to(device), y.to(device)
+    #                 y_pred = model(x)
+    #                 # print(y_pred.shape, y.shape)
+    #                 assert y_pred.shape == y.shape
+    #                 Y_test_pred.append(y_pred.cpu())
+    #             Y_test_pred = torch.cat(Y_test_pred, dim=0)
+    #         preds.append(Y_test_pred)
+    #     preds = torch.stack(preds, dim=0) # [ensemble_size, datasize, L, nx]
+        
+    #     mean_pred = preds.mean(dim=0) # [datasize*L, 1, nx]
+    #     metrics = compute_metrics(Y_test, mean_pred, d=2, device=device) # (l2, rel_l2, mse)
+    #     metrics = torch.stack(metrics,dim=0).mean(dim=1) # [3]
+    #     metrics[2] = torch.sqrt(metrics[2]) # rmse
+    #     metrics_ensemble = metrics
+
+    #     metrics_individual = []
+    #     for i in range(ensemble_size):
+    #         metrics_i = compute_metrics(Y_test, preds[i], d=2, device=device)
+    #         metrics_i = torch.stack(metrics_i,dim=0).mean(dim=1) # [3]
+    #         metrics_i[2] = torch.sqrt(metrics_i[2])
+    #         l2_list.append(metrics_i[0].item())
+    #         rel_l2_list.append(metrics_i[1].item())
+    #         metrics_individual.append(metrics_i)
+    #     metrics_individual = torch.stack(metrics_individual, dim=0) # [ensemble_size, 3]
+    #     metrics_individual = metrics_individual.mean(dim=0) # [3]
+
+    #     return metrics_individual, metrics_ensemble
 
     def evaluate(ensemble):
         results={}
         results['datasize']=datasize
-        metrics, metrics_ensemble = test(ensemble)
+        # metrics, metrics_ensemble = test(ensemble)
+        metrics = test(ensemble)
         results['test/L2']=(metrics[0].item())
         results['test/Relative_L2']=(metrics[1].item())
-        results['test/RMSE']=(metrics[2].item())
-        results['test_ensemble/L2']=(metrics_ensemble[0].item())
-        results['test_ensemble/Relative_L2']=(metrics_ensemble[1].item())
-        results['test_ensemble/RMSE']=(metrics_ensemble[2].item())
-        metrics, metrics_ensemble = test_tf(ensemble)
-        results['test_tf/L2']=(metrics[0].item())
-        results['test_tf/Relative_L2']=(metrics[1].item())
-        results['test_tf/RMSE']=(metrics[2].item())
-        results['test_tf_ensemble/L2']=(metrics_ensemble[0].item())
-        results['test_tf_ensemble/Relative_L2']=(metrics_ensemble[1].item())
-        results['test_tf_ensemble/RMSE']=(metrics_ensemble[2].item())
+        results['test/MAE']=(metrics[2].item())
+        # results['test_ensemble/L2']=(metrics_ensemble[0].item())
+        # results['test_ensemble/Relative_L2']=(metrics_ensemble[1].item())
+        # results['test_ensemble/RMSE']=(metrics_ensemble[2].item())
+        # metrics, metrics_ensemble = test_tf(ensemble)
+        # results['test_tf/L2']=(metrics[0].item())
+        # results['test_tf/Relative_L2']=(metrics[1].item())
+        # results['test_tf/RMSE']=(metrics[2].item())
+        # results['test_tf_ensemble/L2']=(metrics_ensemble[0].item())
+        # results['test_tf_ensemble/Relative_L2']=(metrics_ensemble[1].item())
+        # results['test_tf_ensemble/RMSE']=(metrics_ensemble[2].item())
         print(results)
         wandb.log(results)
         return metrics[2].item() # rmse
@@ -290,6 +402,7 @@ def run_experiment(cfg):
     assert len(train_indices) == initial_datasize
 
     Y = []
+
     for d in range(initial_datasize):
         data = Traj_dataset.pool_with_traj[d] # [nt, 1, nx]
         assert data.shape[0] == nt
@@ -318,6 +431,18 @@ def run_experiment(cfg):
 
         ensemble = [train(Y, unrolling=cfg.train.unrolling, acquire_step=0) for _ in tqdm(range(ensemble_size))]
         evaluate(ensemble)
+    
+    l2_list = torch.tensor(l2_list)
+    rel_l2_list = torch.tensor(rel_l2_list)
+
+    mean_log_l2 = l2_list.log().mean().item()
+    mean_log_rel_l2 = rel_l2_list.log().mean().item()
+
+    wandb.log({'mean_log_l2': mean_log_l2, 'mean_log_rel_l2': mean_log_rel_l2})
+    print('l2 list:', l2_list)
+    print('rel_l2 list:', rel_l2_list)
+    print('mean_log_l2:', mean_log_l2)
+    print('mean_log_rel_l2:', mean_log_rel_l2)
 
 
 def mean_std_normalize():

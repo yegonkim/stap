@@ -94,7 +94,7 @@ class EER_Calculator:
         assert scores.shape == (bs,)
         scores[scores < 0] = 0
 
-        return scores
+        return scores.cpu()
 
 
     @torch.no_grad()

@@ -75,30 +75,49 @@ class LpLoss(object):
 
         # return (diff_norms/y_norms).to(device_original)
 
+    # @torch.no_grad()
+    # def mse(self, x, y):
+    #     device_original = x.device
+    #     all_mse = []
+    #     for X, Y in zip(x.split(self.eval_batch_size), y.split(self.eval_batch_size)):
+    #         X, Y = X.to(self.device), Y.to(self.device)
+    #         X, Y = X.flatten(start_dim=1), Y.flatten(start_dim=1)
+    #         mse = torch.norm(X - Y, self.p, 1).pow(2)
+    #         # y_norms = torch.norm(Y, self.p, 1).pow(2)
+    #         all_mse.append(mse)
+    #     all_mse = torch.cat(all_mse)
+
+    #     if self.reduction:
+    #         if self.size_average:
+    #             return torch.mean(all_mse).to(device_original)
+    #         else:
+    #             return torch.sum(all_mse).to(device_original)
+        
+    #     return all_mse.to(device_original)
+
+    #     # x, y = x.to(self.device), y.to(self.device)
+    #     # mse = F.mse_loss(x, y, reduction='none')
+    #     # mse = mse.mean(dim=tuple(range(1, mse.ndim)))
+    #     # return mse.to(device_original)
+
     @torch.no_grad()
-    def mse(self, x, y):
+    def mae(self, x, y):
         device_original = x.device
-        all_mse = []
+        all_mae = []
         for X, Y in zip(x.split(self.eval_batch_size), y.split(self.eval_batch_size)):
             X, Y = X.to(self.device), Y.to(self.device)
             X, Y = X.flatten(start_dim=1), Y.flatten(start_dim=1)
-            mse = torch.norm(X - Y, self.p, 1).pow(2)
-            # y_norms = torch.norm(Y, self.p, 1).pow(2)
-            all_mse.append(mse)
-        all_mse = torch.cat(all_mse)
+            mae = torch.abs(X - Y).mean(dim=1)
+            all_mae.append(mae)
+        all_mae = torch.cat(all_mae)
 
         if self.reduction:
             if self.size_average:
-                return torch.mean(all_mse).to(device_original)
+                return torch.mean(all_mae).to(device_original)
             else:
-                return torch.sum(all_mse).to(device_original)
+                return torch.sum(all_mae).to(device_original)
         
-        return all_mse.to(device_original)
-
-        # x, y = x.to(self.device), y.to(self.device)
-        # mse = F.mse_loss(x, y, reduction='none')
-        # mse = mse.mean(dim=tuple(range(1, mse.ndim)))
-        # return mse.to(device_original)
+        return all_mae.to(device_original)
 
     def __call__(self, x, y):
         return self.rel(x, y)
@@ -109,5 +128,6 @@ def compute_metrics(y, y_pred, d=1, device='cpu', reduction=False) :
         raise ValueError('y and y_pred must have the same shape')
     l2 = L2_func.abs(y_pred, y) # [bs]
     relative_l2 = L2_func.rel(y_pred, y) # [bs]
-    mse = L2_func.mse(y_pred, y) # [bs]
-    return l2, relative_l2, mse
+    # mse = L2_func.mse(y_pred, y) # [bs]
+    mae = L2_func.mae(y_pred, y) # [bs]
+    return l2, relative_l2, mae
