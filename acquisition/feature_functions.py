@@ -101,14 +101,18 @@ def get_features_hidden_trajectory(X, ensemble, num_steps, device):
 
         all_features = []
         for i in range(num_steps):
-            U=None
             features = []
             outputs = []
             model.eval()
+
+            # just to get the feature dimension
+            output = model(X[0:1])
+            feature = activations['hidden'].flatten(start_dim=1) # [bs, dim]
+            feature_dim = feature.shape[1]
+            U = torch.randn(sketch_dim, feature_dim, device=feature.device)
             for x in X.split(256, dim=0):
                 output = model(x)
                 feature = activations['hidden'].flatten(start_dim=1) # [bs, dim]
-                U = torch.randn(sketch_dim, feature.shape[1], device=feature.device) if U is None else U # [sketch_dim, dim]
                 sketched_feature = torch.einsum('ij,bj->bi', U, feature) # [bs, sketch_dim]
                 outputs.append(output)
                 features.append(sketched_feature)

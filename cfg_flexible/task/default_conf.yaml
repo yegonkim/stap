@@ -19,7 +19,7 @@ post_selection_method: all # initial_ vs flexible_, ...
 mean_field: False
 cheat: False
 
-filter: 2
+filter: 3.0
 filter_method: "all" # all, ignore
 p_proposal: 0.1
 num_proposal: 10
@@ -46,7 +46,6 @@ generate_data:
   rtol: 
 
 
-
 comment: 
 
 seed: 1
@@ -58,6 +57,7 @@ train:
   epochs: 100
   lr: 0.001
   batch_size: 32
+  gaussian_noise: 0.0
 
 wandb:
   use: True
