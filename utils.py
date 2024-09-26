@@ -190,3 +190,26 @@ class GaussianRF:
 
         return u
     
+
+def GRF1D(xi, m=0, gamma=2, tau=5, sigma=5**2):
+    # xi has shape (bs, s) distributed normally
+    xi = xi.clone()
+    bs = xi.shape[0:-1]
+    s = xi.shape[-1]
+    N = s//2 # Example value, adjust as needed
+
+    my_const = 2 * torch.pi
+
+    my_eigs = np.sqrt(2) * (np.abs(sigma) * ((my_const * torch.arange(1, N + 1, device=xi.device))**2 + tau**2) ** (-gamma / 2))
+    my_eigs = my_eigs[None]
+    xi_alpha = xi[..., :N]
+    alpha = my_eigs * xi_alpha
+    xi_beta = xi[..., N:]
+    beta = my_eigs * xi_beta
+
+    a = alpha / 2
+    b = -beta / 2
+    c = torch.cat((torch.flip(a,[-1]) - torch.flip(b,[-1]) * 1j, torch.ones(*bs, 1, device=xi.device) * (m + 0j), a + b * 1j), dim=-1)
+    field = torch.fft.ifft(torch.fft.ifftshift(c,dim=-1), n=s,dim=-1) * (s)
+    field = field.real
+    return field

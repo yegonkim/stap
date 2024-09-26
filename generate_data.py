@@ -12,8 +12,9 @@ import time
 from typing import Tuple
 from copy import copy
 from datetime import datetime
-from PDEs import PDE, KdV, KS, nKdV, cKdV, Heat, Burgers
+from PDEs import PDE, KdV, nKdV, cKdV, Heat, Burgers
 from simulation.ns import NS
+from simulation.ks import KS
 
 from torchdiffeq import odeint
 
@@ -221,9 +222,9 @@ def generate_data(experiment: str,
                   device: torch.cuda.device="cpu",
                   nu: float=0.01,
                   cfg=None) -> None:
-    if experiment in ['KdV', 'KS', 'Heat', 'nKdV', 'cKdV', 'Burgers']:
+    if experiment in ['KdV', 'Heat', 'nKdV', 'cKdV', 'Burgers']:
         _generate_data_ps(experiment, starting_time, end_time, L, nx, nt, nt_effective, num_samples_train, num_samples_valid, num_samples_test, batch_size, device, nu, cfg)
-    elif experiment in ['NS']:
+    elif experiment in ['NS', 'KS']:
         _generate_data_sim(experiment, starting_time, end_time, L, nx, nt, nt_effective, num_samples_train, num_samples_valid, num_samples_test, batch_size, device, nu, cfg)
     else:
         raise Exception("Wrong experiment")
@@ -258,50 +259,99 @@ def _generate_data_sim(experiment: str,
         vis = cfg.generate_data.vis
         fid = cfg.generate_data.nx
         sim = NS(tmax=dt, dt=dt_sim, vis=vis, fid=fid, device=device)
+    elif experiment == 'KS':
+        assert nt == cfg.generate_data.nt
+        dt = cfg.generate_data.end_time / (nt - 1)
+        fid = cfg.generate_data.nx
+        sim = KS(tmax=dt, fid=fid, device=device)
     else:
         raise Exception("Wrong experiment")
     
-    for mode, _, num_samples in files:
-        if num_samples > 0:
+    if experiment == 'NS':
+        for mode, _, num_samples in files:
+            if num_samples > 0:
+                
+                num_batches = int(np.ceil(num_samples / batch_size))
+
+                pde_string = experiment
+                print(f'Equation: {pde_string}')
+                print(f'Mode: {mode}')
+                print(f'Number of samples: {num_samples}')
+
+                sys.stdout.flush()
+
+                save_name = "data/" + "_".join([pde_string, mode])
+                save_name = save_name + "_" + str(num_samples)
+                h5f = h5py.File("".join([save_name, '.h5']), 'a')
+                dataset = h5f.create_group(mode)
+                h5f_u = {}
+                h5f_u = dataset.create_dataset(f'pde', (num_samples, nt_effective, 1, nx, nx), dtype=float)
+
+                for batch_idx in range(num_batches):
+                    n_data = min((batch_idx+1) * batch_size,num_samples) - batch_idx * batch_size
+                    if n_data == 0:
+                        continue
+                    params = torch.randn(n_data, nx**2 * 2).to(device)
+                    u0 = sim.query_in(params).unsqueeze(1) # (n_data, 1, nx, nx)
+                    try:
+                        traj = [u0]
+                        for i in range(nt - 1):
+                            traj.append(sim.query_out(traj[-1].squeeze(1)).unsqueeze(1)) # (n_data, 1, nx, nx)
+                        traj = torch.stack(traj, dim=1) # (n_data, nt, 1, nx, nx)
+                    except AssertionError:
+                        raise Exception('An error occured - possibly an underflow.')
+                    traj = traj[:, -nt_effective:] # (n_data, nt_effective, 1, nx, nx)
+                    traj = traj.cpu()
+                    h5f_u[batch_idx * batch_size:batch_idx * batch_size+n_data] = traj
             
-            num_batches = int(np.ceil(num_samples / batch_size))
+                print()
+                print("Data saved")
+                print()
+                print()
+                h5f.close()
 
-            pde_string = experiment
-            print(f'Equation: {pde_string}')
-            print(f'Mode: {mode}')
-            print(f'Number of samples: {num_samples}')
+    if experiment == 'KS':
+        for mode, _, num_samples in files:
+            if num_samples > 0:
+                
+                num_batches = int(np.ceil(num_samples / batch_size))
 
-            sys.stdout.flush()
+                pde_string = experiment
+                print(f'Equation: {pde_string}')
+                print(f'Mode: {mode}')
+                print(f'Number of samples: {num_samples}')
 
-            save_name = "data/" + "_".join([pde_string, mode])
-            save_name = save_name + "_" + str(num_samples)
-            h5f = h5py.File("".join([save_name, '.h5']), 'a')
-            dataset = h5f.create_group(mode)
-            h5f_u = {}
-            h5f_u = dataset.create_dataset(f'pde', (num_samples, nt_effective, 1, nx, nx), dtype=float)
+                sys.stdout.flush()
 
-            for batch_idx in range(num_batches):
-                n_data = min((batch_idx+1) * batch_size,num_samples) - batch_idx * batch_size
-                if n_data == 0:
-                    continue
-                params = torch.randn(n_data, nx**2 * 2).to(device)
-                u0 = sim.query_in(params).unsqueeze(1) # (n_data, 1, nx, nx)
-                try:
-                    traj = [u0]
-                    for i in range(nt - 1):
-                        traj.append(sim.query_out(traj[-1].squeeze(1)).unsqueeze(1)) # (n_data, 1, nx, nx)
-                    traj = torch.stack(traj, dim=1) # (n_data, nt, 1, nx, nx)
-                except AssertionError:
-                    raise Exception('An error occured - possibly an underflow.')
-                traj = traj[:, -nt_effective:] # (n_data, nt_effective, 1, nx, nx)
-                traj = traj.cpu()
-                h5f_u[batch_idx * batch_size:batch_idx * batch_size+n_data] = traj
-        
-            print()
-            print("Data saved")
-            print()
-            print()
-            h5f.close()
+                save_name = "data/" + "_".join([pde_string, mode])
+                save_name = save_name + "_" + str(num_samples)
+                h5f = h5py.File("".join([save_name, '.h5']), 'a')
+                dataset = h5f.create_group(mode)
+                h5f_u = {}
+                h5f_u = dataset.create_dataset(f'pde', (num_samples, nt_effective, 1, nx), dtype=float)
+
+                for batch_idx in range(num_batches):
+                    n_data = min((batch_idx+1) * batch_size,num_samples) - batch_idx * batch_size
+                    if n_data == 0:
+                        continue
+                    params = torch.randn(n_data, nx).to(device)
+                    u0 = sim.query_in(params).unsqueeze(1) # (n_data, 1, nx)
+                    try:
+                        traj = [u0]
+                        for i in range(nt - 1):
+                            traj.append(sim.query_out(traj[-1].squeeze(1)).unsqueeze(1)) # (n_data, 1, nx)
+                        traj = torch.stack(traj, dim=1) # (n_data, nt, 1, nx)
+                    except AssertionError:
+                        raise Exception('An error occured - possibly an underflow.')
+                    traj = traj[:, -nt_effective:] # (n_data, nt_effective, 1, nx)
+                    traj = traj.cpu()
+                    h5f_u[batch_idx * batch_size:batch_idx * batch_size+n_data] = traj
+            
+                print()
+                print("Data saved")
+                print()
+                print()
+                h5f.close()
 
 def _generate_data_ps(experiment: str,
                   starting_time : float,
@@ -502,9 +552,9 @@ def _get_pde_object(cfg):
 
 @torch.no_grad()
 def evolve(u0, cfg, t0=0, timesteps=1, dt=None):
-    if cfg.equation in ["KdV", "KS", "Heat", "nKdV", "cKdV", "Burgers"]:
+    if cfg.equation in ["KdV", "Heat", "nKdV", "cKdV", "Burgers"]:
         return _evolve_ps(u0, cfg, t0, timesteps, dt)
-    elif cfg.equation in ["NS"]:
+    elif cfg.equation in ["NS", "KS"]:
         return _evolve_sim(u0, cfg, t0, timesteps, dt)
     else:
         raise Exception("Wrong experiment")
@@ -514,18 +564,18 @@ def _evolve_sim(u0, cfg, t0=0, timesteps=1, dt=None):
     device = cfg.device
     batch_size = cfg.generate_data.batch_size
 
-    if cfg.equation != 'NS':
-        raise Exception("Wrong experiment")
-
     nt = cfg.generate_data.nt
     end_time = cfg.generate_data.end_time
     if dt is None:
         dt = end_time / (nt - 1) * (130 / (cfg.nt - 1))
     
-    nx = cfg.generate_data.nx
-    vis = cfg.generate_data.vis
-    fid = cfg.generate_data.nx
-    sim = NS(tmax=dt, dt=cfg.generate_data.dt, vis=vis, fid=fid, device=device)
+    if cfg.equation == 'NS':
+        vis = cfg.generate_data.vis
+        fid = cfg.generate_data.nx
+        sim = NS(tmax=dt, dt=cfg.generate_data.dt, vis=vis, fid=fid, device=device)
+    elif cfg.equation == 'KS':
+        fid = cfg.generate_data.nx
+        sim = KS(tmax=dt, fid=fid, device=device)
 
     u0 = u0.to(device)
     n_data = u0.shape[0]
@@ -536,7 +586,11 @@ def _evolve_sim(u0, cfg, t0=0, timesteps=1, dt=None):
             traj = [u]
             for i in range(timesteps):
                 traj.append(sim.query_out(traj[-1].squeeze(1)).unsqueeze(1))  # (n_data, 1, nx, nx)
-            traj = torch.stack(traj, dim=1)  # (n_data, timesteps + 1, 1, nx, nx)
+            traj = torch.stack(traj, dim=1)
+            # if cfg.equation == 'NS':
+            #     traj = torch.stack(traj, dim=1)  # (n_data, timesteps + 1, 1, nx, nx)
+            # elif cfg.equation == 'KS':
+            #     traj = torch.cat(traj, dim=1)  # (n_data, timesteps + 1, 1, nx)
             traj = traj[:, 1:]  # (n_data, timesteps, 1, nx, nx)
             traj = traj.cpu()
         except AssertionError:
@@ -613,24 +667,3 @@ def _evolve_ps(u0, cfg, t0=0, timesteps=1, dt=None):
     return solution # (n_data, nt, 1, nx)
     
     
-# def generate_ic(num_initial_conditions, cfg):
-#     pde = _get_pde_object(cfg)
-#     T = pde.tmax
-#     L = pde.L
-#     batch_size = cfg.generate_data.batch_size
-#     device = cfg.device
-#     nx = pde.grid_size[1]
-
-#     u0_list = []
-#     for j in range(num_initial_conditions):
-#         x = np.linspace(0, (1 - 1.0 / nx) * L, nx)
-#         # Parameters for initial conditions
-#         A, omega, l = params(pde, batch_size, device=device)
-
-#         # Initial condition of the equation at end
-#         u0 = initial_conditions(A, omega, l, L)(x[:, None])
-
-#         u0_list.append(u0)
-#     u0 = torch.tensor(np.stack(u0_list,axis=0)).to(device)
-
-#     return u0

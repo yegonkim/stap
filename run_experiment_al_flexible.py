@@ -122,8 +122,10 @@ def run_experiment(cfg):
                     in_channels=num_channels, out_channels=num_channels)
 
         model = model.to(device)
-        # model = normalized_model(model, Traj_dataset.mean, Traj_dataset.std, Traj_dataset.mean, Traj_dataset.std)
-        model = normalized_residual_model(model, Traj_dataset.mean, Traj_dataset.std)
+        if cfg.equation == 'KS':
+            model = normalized_model(model, Traj_dataset.mean, Traj_dataset.std, Traj_dataset.mean, Traj_dataset.std)
+        else:
+            model = normalized_residual_model(model, Traj_dataset.mean, Traj_dataset.std)
 
         if len(Y) == 0:
             return model
@@ -263,6 +265,8 @@ def run_experiment(cfg):
     evaluate(ensemble)
 
     for acquire_step in range(1, num_acquire+1):
+        # max_filter, min_filter = max([Y[i].max().item() for i in range(len(Y))]), min([Y[i].min().item() for i in range(len(Y))])
+        # acquirer = Acquirer(ensemble, Traj_dataset.pool, L, train_indices, cfg, max_filter, min_filter)
         acquirer = Acquirer(ensemble, Traj_dataset.pool, L, train_indices, cfg, Traj_dataset.max, Traj_dataset.min)
         if cfg.exponential_data:
             selected = acquirer.select(L * int(initial_datasize * cfg.exponential_rate ** acquire_step) - int(initial_datasize * cfg.exponential_rate ** (acquire_step-1)))
@@ -270,6 +274,11 @@ def run_experiment(cfg):
             selected = acquirer.select(L * cfg.batch_acquire)
 
         datasize += sum([selected[i].sum() for i in selected])
+
+        # no_cheat = Y_from_selected(ensemble, selected, Traj_dataset.pool, L, cfg)
+        # cheat = Y_from_selected_cheat(ensemble, selected, Traj_dataset.pool_with_traj, L, cfg)
+
+        # print(no_cheat[0] - cheat[0])
 
         if cfg.cheat == False:
             Y += Y_from_selected(ensemble, selected, Traj_dataset.pool, L, cfg)
@@ -298,6 +307,15 @@ def mean_std_normalize():
     mean = Traj_dataset.traj_train_32.mean(dim=[i for i in range(ndim) if i != 2], keepdim=True).squeeze(1)
     std = Traj_dataset.traj_train_32.std(dim=[i for i in range(ndim) if i != 2], keepdim=True).squeeze(1)
     print(f'Mean: {mean}, Std: {std}')
+    Traj_dataset.mean = mean
+    Traj_dataset.std = std
+
+def max_min_normalize():
+    max_val = Traj_dataset.traj_train_32.max()
+    min_val = Traj_dataset.traj_train_32.min()
+    mean = (max_val + min_val) / 2
+    std = (max_val - min_val) / 2
+    print(f'Max: {max_val}, Min: {min_val}')
     Traj_dataset.mean = mean
     Traj_dataset.std = std
 
@@ -334,6 +352,10 @@ def main(cfg: OmegaConf):
     Traj_dataset.pool_with_traj = Pool_with_traj(cfg.dataset.train_path, timestep, datasize=cfg.datasize)
 
     mean_std_normalize()
+    # if cfg.equation != 'KS':
+    #     mean_std_normalize()
+    # else:
+    #     max_min_normalize()
 
     Traj_dataset.max = Traj_dataset.traj_train_32.max().item()
     Traj_dataset.min = Traj_dataset.traj_train_32.min().item()

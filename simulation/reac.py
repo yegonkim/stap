@@ -17,16 +17,14 @@ import utils
 import scipy
 from torchdiffeq import odeint
 
-class Reac(Sim):
-    def __init__(self, cfg):
-        super().__init__(cfg)
+class Reac():
+    def __init__(self, tmax=0, fid=32, device='cpu'):
         self.ndim = 1
-        self.fid = 32
-        self.cfg = cfg
-        self.ubound = 2.0
-        self.lbound = -2.0
+        self.tmax=0
+        self.fid = fid
         self.dim_out = 1
         self.param_dim = self.fid
+        self.device=device
 
 
     def solve(self, u0):
@@ -60,13 +58,13 @@ class Reac(Sim):
         solution = odeint(reaction_diffusion, u0, t_eval)
         return solution[-1].permute(1,0)
 
-    def query_in_unnorm(self, params):
+    def query_in(self, params):
         # params = xi : bs x s x s where s is the highest fidelity
         bs = params.shape[:-1]
         s = params.shape[-1]
         params = params.view(-1, s)
         fid = self.fid
-        X = utils.GRF1D(params, gamma=self.cfg.train.alpha, tau=self.cfg.train.tau) * self.cfg.train.scale # [bs, s]
+        X = utils.GRF1D(params)
         # X = X[:,None,None,:] # [bs, 1, 1, s]
         # X = torch.nn.functional.interpolate(X, size=(1,fid), mode='area') # [bs, 1,1,fid]
         # X = X[:,0,0,:] # [bs, fid]
@@ -74,7 +72,7 @@ class Reac(Sim):
 
         return X # [bs, fid]
 
-    def query_out_unnorm(self, X):
+    def query_out(self, X):
         # X: [bs, fid]
         # bs = X.shape[0]
 

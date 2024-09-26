@@ -206,6 +206,8 @@ class Acquirer:
             S[ood, :] = True
         elif filter_method == 'ignore':
             S[ood, :] = False
+        else:
+            pass
             
         
         return S
@@ -233,8 +235,7 @@ class Acquirer:
         elif 'flexible' in selection_method.split('_'):
             if 'p' in selection_method.split('_'):
                 p = float(selection_method.split('_')[-1])
-                S = torch.bernoulli(torch.ones(L) * p).bool()
-                S = S[None]
+                S = torch.bernoulli(torch.ones(bs, L) * p).bool()
             else:
                 S = self.flexible_method(indices)
         else:
