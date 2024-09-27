@@ -8,6 +8,7 @@ wandb:
   project: KS
 
 
+
 datasize: 10000
 testsize: 1000
 
@@ -15,8 +16,8 @@ model:
   n_modes: [128]
 
 dataset:
-  train_path: data/KS_train_10000.h5
-  test_path: data/KS_test_1000.h5
+  train_path: data_exp/KS_train_10000.h5
+  test_path: data_exp/KS_test_1000.h5
 
 
 generate_data:

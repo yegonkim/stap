@@ -51,6 +51,7 @@ class KS():
         # tt = [0]
         tmax = self.tmax
         nmax = round(tmax/h)
+        # nmax = round(0.3/h)
         # nplt = int((tmax/100)/h)
         g = -0.5j * k
         for n in range(1, nmax + 1):

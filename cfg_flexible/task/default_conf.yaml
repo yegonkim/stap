@@ -19,8 +19,8 @@ post_selection_method: all # initial_ vs flexible_, ...
 mean_field: False
 cheat: False
 
-filter: 1.0
-filter_method: "none" # all, ignore
+filter: 1e10
+# filter_method: "none" # all, ignore
 p_proposal: 0.1
 num_proposal: 10
 

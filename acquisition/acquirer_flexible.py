@@ -4,6 +4,7 @@ from .feature_functions import get_features_hidden_trajectory, get_features_ycov
 from utils import direct_model, trajectory_model, split_model, torch_delete, torch_expand
 import numpy as np
 from .acquisition_function import EER_Calculator
+import time
 
 class Acquirer:
     def __init__(self, ensemble, pool, L, train_indices, cfg, max_filter=0, min_filter=0):
@@ -178,7 +179,7 @@ class Acquirer:
         num_proposal = self.cfg.num_proposal
         filter_method = self.cfg.filter_method
 
-        ood = self._check_feasibility(X) # [bs]
+        # ood = self._check_feasibility(X) # [bs]
 
         S = torch.ones(bs,L).bool()
         # S = torch.ones(bs,L).bool().to(self.device)
@@ -202,12 +203,12 @@ class Acquirer:
                         S = S_new
                         scores[j] = new_scores[j]
 
-        if filter_method == 'all':
-            S[ood, :] = True
-        elif filter_method == 'ignore':
-            S[ood, :] = False
-        else:
-            pass
+        # if filter_method == 'all':
+        #     S[ood, :] = True
+        # elif filter_method == 'ignore':
+        #     S[ood, :] = False
+        # else:
+        #     pass
             
         
         return S
@@ -245,16 +246,25 @@ class Acquirer:
     
 
     def select(self, budget):
+        starting_time_initialization = time.time()
         self.initialize_selection()
+        end_time_initialization = time.time()
+        # print(f"Initialization time: {end_time_initialization - starting_time_initialization:.6f}")
 
         total_cost = 0
         selected = {}
         while total_cost < budget:
+            starting_time = time.time()
             top_indices = []
             for _ in range(self.eval_batch_size):
                 top_index = self.get_next()
                 top_indices.append(top_index)
+            end_time = time.time()
+            # print(f"Selection time: {end_time - starting_time:.6f}")
+            starting_time = time.time()
             S = self.post_selection(top_indices) # [eval_bs, L]
+            end_time = time.time()
+            # print(f"Post selection time: {end_time - starting_time:.6f}")
 
             if total_cost + S.sum() > budget:
                 # pick just the first budget - total_cost True indices of S

@@ -551,23 +551,32 @@ def _get_pde_object(cfg):
 
 
 @torch.no_grad()
-def evolve(u0, cfg, t0=0, timesteps=1, dt=None):
+def evolve(u0, cfg, t0=0, timesteps=1):
     if cfg.equation in ["KdV", "Heat", "nKdV", "cKdV", "Burgers"]:
-        return _evolve_ps(u0, cfg, t0, timesteps, dt)
+        return _evolve_ps(u0, cfg, t0, timesteps)
     elif cfg.equation in ["NS", "KS"]:
-        return _evolve_sim(u0, cfg, t0, timesteps, dt)
+        return _evolve_sim(u0, cfg, t0, timesteps)
     else:
         raise Exception("Wrong experiment")
 
-def _evolve_sim(u0, cfg, t0=0, timesteps=1, dt=None):
+def _evolve_sim(u0, cfg, t0=0, timesteps=1):
     # u0 has shape (n_data, 1, nx, nx)
     device = cfg.device
     batch_size = cfg.generate_data.batch_size
 
     nt = cfg.generate_data.nt
     end_time = cfg.generate_data.end_time
-    if dt is None:
-        dt = end_time / (nt - 1) * (130 / (cfg.nt - 1))
+
+    if cfg.equation == 'NS':
+        dt = round(end_time / (nt - 1) * (130 / (cfg.nt - 1)), 5)
+    elif cfg.equation == 'KS':
+        dt_want = round(end_time / (nt - 1) * (130 / (cfg.nt - 1)), 5)
+        dt = round(end_time / (nt - 1), 5)
+        # print(dt_want, dt)
+        assert dt_want % dt < 1e-5 and dt_want % dt > -1e-5
+        timesteps = int(dt_want / dt * timesteps)
+    
+    # print(f'dt: {dt}, timesteps: {timesteps}')
     
     if cfg.equation == 'NS':
         vis = cfg.generate_data.vis
@@ -587,10 +596,6 @@ def _evolve_sim(u0, cfg, t0=0, timesteps=1, dt=None):
             for i in range(timesteps):
                 traj.append(sim.query_out(traj[-1].squeeze(1)).unsqueeze(1))  # (n_data, 1, nx, nx)
             traj = torch.stack(traj, dim=1)
-            # if cfg.equation == 'NS':
-            #     traj = torch.stack(traj, dim=1)  # (n_data, timesteps + 1, 1, nx, nx)
-            # elif cfg.equation == 'KS':
-            #     traj = torch.cat(traj, dim=1)  # (n_data, timesteps + 1, 1, nx)
             traj = traj[:, 1:]  # (n_data, timesteps, 1, nx, nx)
             traj = traj.cpu()
         except AssertionError:

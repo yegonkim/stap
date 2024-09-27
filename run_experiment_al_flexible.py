@@ -273,7 +273,7 @@ def run_experiment(cfg):
         else:
             selected = acquirer.select(L * cfg.batch_acquire)
 
-        datasize += sum([selected[i].sum() for i in selected])
+        # datasize += sum([selected[i].sum() for i in selected])
 
         # no_cheat = Y_from_selected(ensemble, selected, Traj_dataset.pool, L, cfg)
         # cheat = Y_from_selected_cheat(ensemble, selected, Traj_dataset.pool_with_traj, L, cfg)
@@ -284,6 +284,9 @@ def run_experiment(cfg):
             Y += Y_from_selected(ensemble, selected, Traj_dataset.pool, L, cfg)
         else:
             Y += Y_from_selected_cheat(ensemble, selected, Traj_dataset.pool_with_traj, L, cfg)
+
+        # Y += Y_add
+        datasize = sum([len(traj)-1 for traj in Y])
 
         ensemble = [train(Y, unrolling=cfg.train.unrolling, acquire_step=0, gaussian_noise=cfg.train.gaussian_noise) for _ in tqdm(range(ensemble_size))]
         evaluate(ensemble)

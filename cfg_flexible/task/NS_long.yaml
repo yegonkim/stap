@@ -12,21 +12,24 @@ wandb:
 datasize: 10000
 testsize: 1000
 
+p_proposal: 0.04
+num_proposal: 25
+
 model:
   n_modes: [32, 32]
 
 dataset:
-  train_path: data_exp/NS_train_10000.h5
-  test_path: data_exp/NS_test_1000.h5
+  train_path: data_exp/NS_train_10000_long.h5
+  test_path: data_exp/NS_test_1000_long.h5
 # dataset:
 #   train_path: data/NS_train_1000.h5
 #   test_path: data/NS_test_1.h5
 
 
 generate_data:
-  nt: 280
+  nt: 211
   nx: 32
-  end_time: 27.9 # 179 * 1e-2 * 23
+  end_time: 42.0 # 179 * 1e-2 * 23
   dt: 1e-2
   vis: 1e-3
   batch_size: 1024

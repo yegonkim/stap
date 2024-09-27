@@ -14,8 +14,8 @@ model:
   n_modes: [16]
 
 dataset:
-  train_path: data/Heat_train_10000.h5
-  test_path: data/Heat_test_1000.h5
+  train_path: data_exp/Heat_train_10000.h5
+  test_path: data_exp/Heat_test_1000.h5
 
 # dataset:
 #   train_path: data_large/Heat_train_10000_default.h5

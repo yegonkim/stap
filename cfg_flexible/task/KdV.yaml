@@ -7,6 +7,8 @@ train:
 wandb:
   project: KdV
 
+filter: 10.0
+
 datasize: 10000
 testsize: 1000
 
@@ -14,8 +16,8 @@ model:
   n_modes: [256]
 
 dataset:
-  train_path: data/KdV_train_10000.h5
-  test_path: data/KdV_test_1000.h5
+  train_path: data_exp/KdV_train_10000.h5
+  test_path: data_exp/KdV_test_1000.h5
 
 
 generate_data:
