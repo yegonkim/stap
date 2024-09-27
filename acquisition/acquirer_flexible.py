@@ -20,7 +20,7 @@ class Acquirer:
         self.eer_mode = 'MF-EER' if cfg.mean_field else 'EER'
         self.max_filter = max_filter
         self.min_filter = min_filter
-        self.filter = cfg.filter
+        # self.filter = cfg.filter
 
     def _eval_mode(self):
         for model in self.ensemble:
@@ -177,7 +177,6 @@ class Acquirer:
         assert X.shape[0] == bs
         p_proposal = self.cfg.p_proposal
         num_proposal = self.cfg.num_proposal
-        filter_method = self.cfg.filter_method
 
         # ood = self._check_feasibility(X) # [bs]
 
@@ -249,7 +248,7 @@ class Acquirer:
         starting_time_initialization = time.time()
         self.initialize_selection()
         end_time_initialization = time.time()
-        # print(f"Initialization time: {end_time_initialization - starting_time_initialization:.6f}")
+        print(f"Initialization time: {end_time_initialization - starting_time_initialization:.6f}")
 
         total_cost = 0
         selected = {}
@@ -260,11 +259,11 @@ class Acquirer:
                 top_index = self.get_next()
                 top_indices.append(top_index)
             end_time = time.time()
-            # print(f"Selection time: {end_time - starting_time:.6f}")
+            print(f"Selection time: {end_time - starting_time:.6f}")
             starting_time = time.time()
             S = self.post_selection(top_indices) # [eval_bs, L]
             end_time = time.time()
-            # print(f"Post selection time: {end_time - starting_time:.6f}")
+            print(f"Post selection time: {end_time - starting_time:.6f}")
 
             if total_cost + S.sum() > budget:
                 # pick just the first budget - total_cost True indices of S
@@ -300,22 +299,22 @@ class Acquirer:
         scores = self._compute_variance(X, timesteps=L) # [bs, nt-1-starting_time]
         return scores
 
-    @torch.no_grad()
-    def _check_feasibility(self, X):
-        X = X.to(self.device) # [bs, 1, nx]
-        bs = X.shape[0]
-        ensemble = self.ensemble
+    # @torch.no_grad()
+    # def _check_feasibility(self, X):
+    #     X = X.to(self.device) # [bs, 1, nx]
+    #     bs = X.shape[0]
+    #     ensemble = self.ensemble
         
-        feasibility_list = []
-        for model in ensemble:
-            model.eval()
-            pred = trajectory_model(split_model(model, self.eval_batch_size), self.L)(X)
-            feasibility = torch.logical_or(pred > self.max_filter*self.filter, pred < self.min_filter*self.filter)
-            feasibility = feasibility.any(dim=tuple(range(1, feasibility.dim()))) # [bs]
-            feasibility_list.append(feasibility)
-        feasibility = torch.stack(feasibility_list, dim=1).any(dim=1) # [bs]
-        assert feasibility.shape == (X.shape[0],)
-        return feasibility # [bs]
+    #     feasibility_list = []
+    #     for model in ensemble:
+    #         model.eval()
+    #         pred = trajectory_model(split_model(model, self.eval_batch_size), self.L)(X)
+    #         feasibility = torch.logical_or(pred > self.max_filter*self.filter, pred < self.min_filter*self.filter)
+    #         feasibility = feasibility.any(dim=tuple(range(1, feasibility.dim()))) # [bs]
+    #         feasibility_list.append(feasibility)
+    #     feasibility = torch.stack(feasibility_list, dim=1).any(dim=1) # [bs]
+    #     assert feasibility.shape == (X.shape[0],)
+    #     return feasibility # [bs]
 
 
     @torch.no_grad()

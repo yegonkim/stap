@@ -19,8 +19,8 @@ model:
   n_modes: [32, 32]
 
 dataset:
-  train_path: data_exp/NS_train_10000_long.h5
-  test_path: data_exp/NS_test_1000_long.h5
+  train_path: /mnt/home/yegonkim/home/lupi/data_exp/NS_train_10000_long.h5
+  test_path: /mnt/home/yegonkim/home/lupi/data_exp/NS_test_1000_long.h5
 # dataset:
 #   train_path: data/NS_train_1000.h5
 #   test_path: data/NS_test_1.h5

@@ -645,8 +645,8 @@ def _evolve_ps(u0, cfg, t0=0, timesteps=1, dt=None):
             # T = pde.tmax
             # L = pde.L
 
-            # if pde_string == 'Burgers':
-            #     u = inv_cole_hopf(u, pde)
+            if pde_string == 'Burgers':
+                u = inv_cole_hopf(u, pde)
             # t = np.linspace(0, T, nt)
             # x = np.linspace(0, (1 - 1.0 / nx) * L, nx)
         

@@ -16,12 +16,12 @@ model:
   n_modes: [128]
 
 dataset:
-  train_path: /mnt/home/yegonkim/home/lupi/data_exp/KS_train_10000.h5
-  test_path: /mnt/home/yegonkim/home/lupi/data_exp/KS_test_1000.h5
+  train_path: /mnt/home/yegonkim/home/lupi/data_exp/KS_train_10000_short.h5
+  test_path: /mnt/home/yegonkim/home/lupi/data_exp/KS_test_1000_short.h5
 
 
 generate_data:
-  nt: 341
+  nt: 241
   nx: 256
-  end_time: 102.0
+  end_time: 36.0
   batch_size: 1024

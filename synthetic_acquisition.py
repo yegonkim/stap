@@ -6,6 +6,7 @@ from utils import torch_expand
 from omegaconf import OmegaConf
 
 from utils import split_model
+from tqdm import tqdm
 
 
 def extract_consecutive_trues(bool_list, value_list):
@@ -45,8 +46,9 @@ def Y_from_selected(ensemble: list, selected: dict, pool, L, cfg: OmegaConf):
     try:
         # for scale_threhold in [2, 1.5, 1.25, 1.1]:
         preds = [torch_expand(X[:,None], 1, len(ensemble))] # [datasize, ensemble_size, c, nx]
-        for t in range(L):
+        for t in tqdm(range(L)):
             X_t = preds[-1].clone()
+            print(X_t.max(), X_t.min())
             filter_indices = (X_t.mean(dim=1).flatten(1).abs().max(dim=1).values > filter)
             # print(filter_indices)
             if filter_indices.any():
