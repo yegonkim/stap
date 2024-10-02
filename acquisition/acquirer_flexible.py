@@ -220,17 +220,16 @@ class Acquirer:
         if selection_method == 'all':
             S = torch.ones(bs,L).bool()
         elif 'initial' in selection_method.split('_'):
-            raise NotImplementedError
-            # if 'p' in selection_method.split('_'):
-            #     p = float(selection_method.split('_')[-1])
-            #     S_temp = torch.bernoulli(torch.ones(L) * p).bool()
-            #     S = torch.zeros(L).bool()
-            #     S[:S_temp.sum()] = True
-            #     if S.sum() > budget:
-            #         S = torch.zeros(L).bool()
-            #         S[:budget] = True
-            #     S = S[None]
-            # else:
+            # raise NotImplementedError
+            if 'p' in selection_method.split('_'):
+                p = float(selection_method.split('_')[-1])
+                S_temp = torch.bernoulli(torch.ones(bs, L) * p).bool()
+                num_selected = S_temp.sum(dim=1)
+                S = torch.zeros(bs, L).bool()
+                for i in range(bs):
+                    S[i, :num_selected[i]] = True
+            else:
+                raise ValueError(f"Post selection method {selection_method} not implemented.")
             #     S = self.initial_method(index, budget)
         elif 'flexible' in selection_method.split('_'):
             if 'p' in selection_method.split('_'):

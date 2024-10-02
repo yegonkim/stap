@@ -5,7 +5,7 @@ equation: KS
 train:
   unrolling: 0
 wandb:
-  project: KS
+  project: KS_short_27_9_27
 
 nt: 27
 

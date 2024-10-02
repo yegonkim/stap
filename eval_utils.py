@@ -16,7 +16,7 @@ class LpLoss(object):
         self.device = device
         self.eval_batch_size = eval_batch_size
 
-    @torch.no_grad()
+    # @torch.no_grad()
     def abs(self, x, y):
         num_examples = x.size()[0]
         device_original = x.device

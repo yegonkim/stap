@@ -5,7 +5,7 @@ equation: NS
 train:
   unrolling: 0
 wandb:
-  project: NS
+  project: NS_9_26_32
 
 # datasize: 1000
 # testsize: 1

@@ -9,7 +9,7 @@ from itertools import islice
 import argparse
 import time
 
-from eval_utils import compute_metrics
+from eval_utils import compute_metrics, LpLoss
 from utils import set_seed, flatten_configdict, trajectory_model, direct_model, split_model, normalized_model, residual_model, normalized_residual_model
 from acquisition.acquirer_flexible import Acquirer
 
@@ -102,6 +102,7 @@ def run_experiment(cfg):
     lr = cfg.train.lr
     batch_size = cfg.train.batch_size
     initial_datasize = cfg.initial_datasize
+    loss_function = cfg.loss_function
 
     data_nt = Traj_dataset.traj_train_32.shape[1]
     timestep = (data_nt - 1) // (cfg.nt - 1) # 10
@@ -132,7 +133,12 @@ def run_experiment(cfg):
 
         optimizer = torch.optim.Adam(model.parameters(), lr=lr)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, epochs)
-        criterion = torch.nn.MSELoss()
+        if loss_function == 'mse':
+            criterion = torch.nn.MSELoss()
+        elif loss_function == 'rmse':
+            criterion = LpLoss()
+        else:
+            raise ValueError(f'Unknown loss function: {loss_function}')
 
         inputs, outputs, unrolls = [], [], []
         for traj in Y:
@@ -158,10 +164,15 @@ def run_experiment(cfg):
 
         dataset = torch.utils.data.TensorDataset(inputs, outputs, unrolls)
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        
+        if unrolling > 0:
+            dataloader = islice(dataloader, iter_per_epoch)
 
         model.train()
         for epoch in range(epochs):
             total_loss = 0
+
+
             # for x, y, unroll in islice(dataloader, iter_per_epoch):
             for x, y, unroll in dataloader:
                 optimizer.zero_grad()
@@ -179,7 +190,10 @@ def run_experiment(cfg):
                         unroll[unroll > 0] -= 1
 
                 pred = model(x)
-                loss = criterion(pred, y)
+                if loss_function == 'mse':
+                    loss = criterion(pred, y)
+                elif loss_function == 'rmse':
+                    loss = criterion.abs(pred, y)
 
                 loss.backward()
                 optimizer.step()
@@ -216,7 +230,8 @@ def run_experiment(cfg):
         
         metrics = []
         for i in range(ensemble_size):
-            metrics_i = compute_metrics(Y_test, preds[i], d=2, device=device)
+            with torch.no_grad():
+                metrics_i = compute_metrics(Y_test, preds[i], d=2, device=device)
             metrics_i = torch.stack(metrics_i,dim=0) # [3, datasize]
             l2_i = metrics_i[0]
             quantile_99 = torch.quantile(l2_i, 0.99)

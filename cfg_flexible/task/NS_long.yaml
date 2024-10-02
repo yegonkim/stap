@@ -13,7 +13,6 @@ datasize: 10000
 testsize: 1000
 
 p_proposal: 0.04
-num_proposal: 25
 
 model:
   n_modes: [32, 32]

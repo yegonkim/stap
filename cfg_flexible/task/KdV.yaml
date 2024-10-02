@@ -5,7 +5,7 @@ equation: KdV
 train:
   unrolling: 0
 wandb:
-  project: KdV
+  project: KdV_9_26_32
 
 filter: 10.0
 

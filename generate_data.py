@@ -289,7 +289,8 @@ def _generate_data_sim(experiment: str,
                 h5f_u = {}
                 h5f_u = dataset.create_dataset(f'pde', (num_samples, nt_effective, 1, nx, nx), dtype=float)
 
-                for batch_idx in tqdm(range(num_batches)):
+                # for batch_idx in tqdm(range(num_batches)):
+                for batch_idx in range(num_batches):
                     n_data = min((batch_idx+1) * batch_size,num_samples) - batch_idx * batch_size
                     if n_data == 0:
                         continue

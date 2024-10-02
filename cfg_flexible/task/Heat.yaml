@@ -5,7 +5,7 @@ equation: Heat
 train:
   unrolling: 0
 wandb:
-  project: Heat
+  project: Heat_9_26_32
 
 datasize: 10000
 testsize: 1000
