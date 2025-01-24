@@ -224,12 +224,111 @@ def generate_data(experiment: str,
                   device: torch.cuda.device="cpu",
                   nu: float=0.01,
                   cfg=None) -> None:
-    if experiment in ['KdV', 'Heat', 'nKdV', 'cKdV', 'Burgers']:
+    if experiment in ['KdV', 'Heat', 'nKdV', 'cKdV']:
         _generate_data_ps(experiment, starting_time, end_time, L, nx, nt, nt_effective, num_samples_train, num_samples_valid, num_samples_test, batch_size, device, nu, cfg)
     elif experiment in ['NS', 'KS']:
         _generate_data_sim(experiment, starting_time, end_time, L, nx, nt, nt_effective, num_samples_train, num_samples_valid, num_samples_test, batch_size, device, nu, cfg)
+    elif experiment in ['Burgers']:
+        _generate_data_jax(experiment, starting_time, end_time, L, nx, nt, nt_effective, num_samples_train, num_samples_valid, num_samples_test, batch_size, device, nu, cfg)
     else:
         raise Exception("Wrong experiment")
+
+
+def _generate_data_jax(experiment: str,
+                  starting_time : float,
+                  end_time: float,
+                  L: float,
+                  nx: int,
+                  nt: int,
+                  nt_effective: int,
+                  num_samples_train: int,
+                  num_samples_valid: int,
+                  num_samples_test: int,
+                  batch_size: int=1,
+                  device: torch.cuda.device="cpu",
+                  nu: float=0.01,
+                  cfg=None) -> None:
+    print(f'Generating data')
+    from al4pde.tasks.ic_gen.ic_gen_burgers import ICGenBurgers
+    from al4pde.tasks.sim.burgers import BurgersSim
+
+
+    # Check if train, valid and test files already exist and replace if wanted
+    files = {("train", num_samples_train > 0, num_samples_train),
+             ("valid", num_samples_valid > 0, num_samples_valid),
+             ("test", num_samples_test > 0, num_samples_test)}
+    check_files(experiment, files)
+
+    if experiment == 'Burgers':
+        assert nt == cfg.generate_data.nt
+        dt = cfg.generate_data.end_time / cfg.generate_data.nt
+        nu = cfg.generate_data.nu
+        nx = cfg.generate_data.nx
+        L = cfg.generate_data.L
+        sim = BurgersSim(
+            ini_time=0.,
+            dt=dt,        
+            CFL=0.25,       
+            show_steps=100,
+            if_norm=False, 
+            if_second_order=1.,
+        )
+        ic_gen = ICGenBurgers(
+            k_tot = 4,
+            num_choice_k = 2,
+            xL = 0.,
+            xR = L,
+            nx = nx,
+        )
+        pde_params = torch.Tensor([[nu]]).repeat(batch_size, 1)
+        grid = ic_gen.get_grid(1)[0]
+
+    else:
+        raise Exception("Wrong experiment")
+    
+    if experiment == 'Burgers':
+        for mode, _, num_samples in files:
+            if num_samples > 0:
+                
+                num_batches = int(np.ceil(num_samples / batch_size))
+
+                pde_string = experiment
+                print(f'Equation: {pde_string}')
+                print(f'Mode: {mode}')
+                print(f'Number of samples: {num_samples}')
+
+                sys.stdout.flush()
+
+                save_name = "data/" + "_".join([pde_string, mode])
+                save_name = save_name + "_" + str(num_samples)
+                h5f = h5py.File("".join([save_name, '.h5']), 'a')
+                dataset = h5f.create_group(mode)
+                h5f_u = {}
+                h5f_u = dataset.create_dataset(f'pde', (num_samples, nt_effective, 1, nx), dtype=float)
+
+                # for batch_idx in tqdm(range(num_batches)):
+                for batch_idx in range(num_batches):
+                    n_data = min((batch_idx+1) * batch_size,num_samples) - batch_idx * batch_size
+                    if n_data == 0:
+                        continue
+                    ic_params = ic_gen.initialize_ic_params(batch_size)
+                    ic = ic_gen.generate_initial_conditions(ic_params, pde_params)
+                    try:
+                        traj, _= sim(ic, pde_params,grid, nt=nt)
+
+                    except AssertionError:
+                        raise Exception('An error occured while generating data.')
+                    traj = traj[:, -nt_effective:,None,:,0] # (n_data, nt_effective, 1, nx)
+                    traj = traj.cpu()
+                    h5f_u[batch_idx * batch_size:batch_idx * batch_size+n_data] = traj[:n_data]
+            
+                print()
+                print("Data saved")
+                print()
+                print()
+                h5f.close()
+
+        
 
 def _generate_data_sim(experiment: str,
                   starting_time : float,
@@ -260,7 +359,8 @@ def _generate_data_sim(experiment: str,
         dt_sim = cfg.generate_data.dt
         vis = cfg.generate_data.vis
         fid = cfg.generate_data.nx
-        sim = NS(tmax=dt, dt=dt_sim, vis=vis, fid=fid, device=device)
+        force = cfg.generate_data.force
+        sim = NS(tmax=dt, dt=dt_sim, vis=vis, fid=fid, force=force, device=device)
     elif experiment == 'KS':
         assert nt == cfg.generate_data.nt
         dt = cfg.generate_data.end_time / (nt - 1)
@@ -467,10 +567,13 @@ def _generate_data_ps(experiment: str,
 
 @hydra.main(version_base=None, config_path="cfg_flexible", config_name="config.yaml")
 def main(cfg: OmegaConf):
+    os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = ".30" # proportion of memory preallocated for jax
     print("Input arguments:")
     print(OmegaConf.to_yaml(cfg))
 
     check_directory()
+
+    start_time = time.time()
     generate_data(experiment=cfg.equation,
                     starting_time=cfg.generate_data.starting_time,
                     end_time=cfg.generate_data.end_time,
@@ -485,6 +588,8 @@ def main(cfg: OmegaConf):
                     device=cfg.device,
                     nu=cfg.generate_data.nu,
                     cfg=cfg,)
+    end_time = time.time()
+    print(f'Time elapsed: {end_time - start_time:.2f} seconds')
 
 
 
@@ -555,12 +660,56 @@ def _get_pde_object(cfg):
 
 @torch.no_grad()
 def evolve(u0, cfg, t0=0, timesteps=1):
-    if cfg.equation in ["KdV", "Heat", "nKdV", "cKdV", "Burgers"]:
+    if cfg.equation in ["KdV", "Heat", "nKdV", "cKdV"]:
         return _evolve_ps(u0, cfg, t0, timesteps)
     elif cfg.equation in ["NS", "KS"]:
         return _evolve_sim(u0, cfg, t0, timesteps)
     else:
         raise Exception("Wrong experiment")
+
+class EvolveJax():
+    def __init__(self, cfg):
+        from al4pde.tasks.ic_gen.ic_gen_burgers import ICGenBurgers
+        from al4pde.tasks.sim.burgers import BurgersSim
+        self.cfg = cfg
+        nt = cfg.generate_data.nt
+        dt = cfg.generate_data.end_time / cfg.generate_data.nt
+        nu = cfg.generate_data.nu
+        nx = cfg.generate_data.nx
+        L = cfg.generate_data.L
+        self.nu = nu
+        self.sim = BurgersSim(
+            ini_time=0.,
+            dt=dt,
+            CFL=0.25,
+            show_steps=100,
+            if_norm=False,
+            if_second_order=1.,
+        )
+        ic_gen = ICGenBurgers(
+            k_tot = 4, # not used, no need to change
+            num_choice_k = 2, # not used, no need to change
+            xL = 0.,
+            xR = L,
+            nx = nx,
+        )
+        self.grid = ic_gen.get_grid(1)[0]
+    def __call__(self, u0, t0=0, timesteps=1):
+        # u0 has shape (n_data, 1, nx)
+        n_data, _, nx = u0.shape
+        onedata = False
+        if n_data == 1:
+            u0 = u0.repeat(2,1,1)
+            n_data = 2
+            onedata = True
+        u0 = u0.reshape(n_data,nx,1,1)
+        pde_params = torch.Tensor([[self.nu]]).repeat(n_data, 1)
+        traj, _ = self.sim(u0,pde_params,self.grid, nt=timesteps)
+        traj = traj.reshape(n_data,timesteps,1,nx)
+        if onedata:
+            traj = traj[:1]
+        return traj
+
 
 def _evolve_sim(u0, cfg, t0=0, timesteps=1):
     # u0 has shape (n_data, 1, nx, nx)
@@ -584,7 +733,8 @@ def _evolve_sim(u0, cfg, t0=0, timesteps=1):
     if cfg.equation == 'NS':
         vis = cfg.generate_data.vis
         fid = cfg.generate_data.nx
-        sim = NS(tmax=dt, dt=cfg.generate_data.dt, vis=vis, fid=fid, device=device)
+        force = cfg.generate_data.force
+        sim = NS(tmax=dt, dt=cfg.generate_data.dt, vis=vis, fid=fid, force=force, device=device)
     elif cfg.equation == 'KS':
         fid = cfg.generate_data.nx
         sim = KS(tmax=dt, fid=fid, device=device)

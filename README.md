@@ -2,15 +2,16 @@
 
 Generate data
 
-python generate_data.py --experiment=KdV --train_samples=1024 --valid_samples=1024 --test_samples=4096 --L=128 --suffix default --batch_size 4096 --device cuda
+<!-- python generate_data.py --experiment=KdV --train_samples=1024 --valid_samples=1024 --test_samples=4096 --L=128 --suffix default --batch_size 4096 --device cuda
 python ../generate_data.py --experiment=Burgers --train_samples=10000 --valid_samples=0 --test_samples=10000 --L=128 --nt=180 --end_time=18. --suffix default --batch_size 4096 --device cuda
 python generate_data.py --experiment=Heat --train_samples=10000 --valid_samples=0 --test_samples=10000 --L=6.28 --nt=180 --end_time=18. --suffix default --batch_size 4096 --device cuda
 python generate_data.py --experiment=KS --train_samples=1024 --valid_samples=1024 --test_samples=4096 --L=64 --nt=500 --suffix default --batch_size 4096 --device cuda
 
 python generate_data.py --experiment=KdV --train_samples=10000 --valid_samples=0 --test_samples=10000 --L=128 --end_time=56. --suffix default --batch_size 10000 --device cuda --nt 140 --nt_effective 140
 python generate_data.py --experiment=Burgers --train_samples=10000 --valid_samples=0 --test_samples=10000 --L=128 --end_time=14. --suffix default --batch_size 4096 --device cuda --nt 140 --nt_effective 140
-python generate_data.py --experiment=KS --train_samples=1000 --valid_samples=0 --test_samples=1000 --L=64 --end_time=28. --suffix default --batch_size 4096 --device cuda --nt 140 --nt_effective 140
+python generate_data.py --experiment=KS --train_samples=1000 --valid_samples=0 --test_samples=1000 --L=64 --end_time=28. --suffix default --batch_size 4096 --device cuda --nt 140 --nt_effective 140 -->
 
+python generate_data.py task=NS datasize=80 testsize=0 generate_data.batch_size=1
 
 Run experiment
 

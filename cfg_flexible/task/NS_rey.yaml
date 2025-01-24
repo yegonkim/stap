@@ -5,29 +5,32 @@ equation: NS
 train:
   unrolling: 0
 wandb:
-  project: NS_sibal
+  project: NS_rey
 
 # datasize: 1000
 # testsize: 1
 datasize: 10000
 testsize: 1000
 
+nt: 14
+
 model:
   n_modes: [32, 32]
 
 dataset:
-  train_path: /mnt/home/yegonkim/home/lupi/data_exp/NS_train_10000.h5
-  test_path: /mnt/home/yegonkim/home/lupi/data_exp/NS_test_1000.h5
+  train_path: /mnt/home/yegonkim/home/lupi/data_exp/NS_rey_train_10000.h5
+  test_path: /mnt/home/yegonkim/home/lupi/data_exp/NS_rey_test_1000.h5
 # dataset:
 #   train_path: data/NS_train_1000.h5
 #   test_path: data/NS_test_1.h5
 
 
 generate_data:
-  nt: 280
+  nt: 201
   nx: 32
-  end_time: 27.9 # 179 * 1e-2 * 23
-  dt: 1e-2
-  vis: 1e-3
+  # end_time: 27.9 # 179 * 1e-2 * 23
+  end_time: 40.0 # 179 * 1e-2 * 23
+  dt: 1e-3
+  vis: 2e-4
   force: li
   batch_size: 1024

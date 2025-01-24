@@ -17,10 +17,13 @@ from omegaconf import OmegaConf
 import hydra
 import wandb
 
+
+
 from synthetic_acquisition import Y_from_selected, Y_from_selected_cheat
 
 import os
 os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
+os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = ".30" # proportion of memory preallocated for jax
 
 class Traj_dataset:
     traj_train_32 = None
@@ -91,6 +94,8 @@ class Pool_with_traj:
 
 def run_experiment(cfg):
     wandb.define_metric("datasize")
+
+    start_time = time.time()
 
     unrolling = cfg.train.unrolling
     nt = cfg.nt
@@ -318,6 +323,9 @@ def run_experiment(cfg):
     results['mean_log_test/50_L2'] = mean_log_metrics[5].item()
     print(results)
     wandb.log(results)
+
+    end_time = time.time()
+    print(f'Total time: {end_time - start_time}')
 
 
 def mean_std_normalize():

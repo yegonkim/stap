@@ -10,7 +10,7 @@ from einops import rearrange, repeat
 from utils import GaussianRF
 
 class NS():
-    def __init__(self, tmax=0, dt=0, vis=0, fid=32, device='cpu'):
+    def __init__(self, tmax=0, dt=0, vis=0, fid=32, force='li', device='cpu'):
         super().__init__()
         self.ndim = 2
         self.fid = fid
@@ -21,9 +21,10 @@ class NS():
         self.GRF = GaussianRF(2, self.fid, alpha=2, tau=7, sigma=None, device=device)
         # self.GRF = GaussianRF(2, self.fid, alpha=cfg.train.alpha, tau=cfg.train.tau, sigma=None, device=cfg.device)
         self.param_dim = self.fid**2 * 2
+        self.force = force
 
     def solve(self, X):
-        return solve_navier_stokes_2d(X, self.vis, self.tmax, self.dt, 1)[..., -1]
+        return solve_navier_stokes_2d(X, self.vis, self.tmax, self.dt, 1, force=self.force)[..., -1]
 
     def query_in(self, params):
         # params: [*bs, fid^2 * 2]
