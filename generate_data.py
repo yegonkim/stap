@@ -261,7 +261,7 @@ def _generate_data_jax(experiment: str,
 
     if experiment == 'Burgers':
         assert nt == cfg.generate_data.nt
-        dt = cfg.generate_data.end_time / cfg.generate_data.nt
+        dt = cfg.generate_data.end_time / (cfg.generate_data.nt-1)
         nu = cfg.generate_data.nu
         nx = cfg.generate_data.nx
         L = cfg.generate_data.L
@@ -664,6 +664,10 @@ def evolve(u0, cfg, t0=0, timesteps=1):
         return _evolve_ps(u0, cfg, t0, timesteps)
     elif cfg.equation in ["NS", "KS"]:
         return _evolve_sim(u0, cfg, t0, timesteps)
+    elif cfg.equation == "Burgers":
+        evolve_burgers = EvolveJax(cfg)
+        timestep_length = 130//(cfg.nt-1)
+        return evolve_burgers(u0, t0, timesteps*timestep_length)[:,timestep_length::timestep_length]
     else:
         raise Exception("Wrong experiment")
 
@@ -673,7 +677,7 @@ class EvolveJax():
         from al4pde.tasks.sim.burgers import BurgersSim
         self.cfg = cfg
         nt = cfg.generate_data.nt
-        dt = cfg.generate_data.end_time / cfg.generate_data.nt
+        dt = cfg.generate_data.end_time / (cfg.generate_data.nt-1)
         nu = cfg.generate_data.nu
         nx = cfg.generate_data.nx
         L = cfg.generate_data.L
@@ -697,6 +701,7 @@ class EvolveJax():
     def __call__(self, u0, t0=0, timesteps=1):
         # u0 has shape (n_data, 1, nx)
         n_data, _, nx = u0.shape
+        timesteps = timesteps + 1
         onedata = False
         if n_data == 1:
             u0 = u0.repeat(2,1,1)
