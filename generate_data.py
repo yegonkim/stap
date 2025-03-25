@@ -228,7 +228,7 @@ def generate_data(experiment: str,
         _generate_data_ps(experiment, starting_time, end_time, L, nx, nt, nt_effective, num_samples_train, num_samples_valid, num_samples_test, batch_size, device, nu, cfg)
     elif experiment in ['NS', 'KS']:
         _generate_data_sim(experiment, starting_time, end_time, L, nx, nt, nt_effective, num_samples_train, num_samples_valid, num_samples_test, batch_size, device, nu, cfg)
-    elif experiment in ['Burgers']:
+    elif experiment in ['Burgers', 'CNS']:
         _generate_data_jax(experiment, starting_time, end_time, L, nx, nt, nt_effective, num_samples_train, num_samples_valid, num_samples_test, batch_size, device, nu, cfg)
     else:
         raise Exception("Wrong experiment")
@@ -251,6 +251,9 @@ def _generate_data_jax(experiment: str,
     print(f'Generating data')
     from al4pde.tasks.ic_gen.ic_gen_burgers import ICGenBurgers
     from al4pde.tasks.sim.burgers import BurgersSim
+    from al4pde.tasks.ic_gen.ic_gen_2d_ns_rand import ICGenNSRand
+    from al4pde.tasks.param_gen import PDEParamGenerator
+    from al4pde.tasks.sim.cfd import CFDSim
 
 
     # Check if train, valid and test files already exist and replace if wanted
@@ -283,6 +286,58 @@ def _generate_data_jax(experiment: str,
         pde_params = torch.Tensor([[nu]]).repeat(batch_size, 1)
         grid = ic_gen.get_grid(1)[0]
 
+    elif experiment == 'CNS':
+        assert nt == cfg.generate_data.nt
+        L = cfg.generate_data.L
+        nx = cfg.generate_data.nx
+        T = cfg.generate_data.end_time
+        nt = cfg.generate_data.nt 
+        dt = cfg.generate_data.end_time / (cfg.generate_data.nt-1)
+        
+        eta = cfg.generate_data.eta
+        zeta = cfg.generate_data.zeta
+        ic_gen = ICGenNSRand(
+            k_tot = 4,
+            xL = 0.,
+            xR = L,
+            yL = 0.0,
+            yR = L,
+            zL = 0.0,
+            zR = 1.0,
+            nx = nx,
+            ny = nx,
+            nz = 1,
+            mach_min = 0.1,
+            mach_max = 1.0,
+            gamma = 1.6666666666666667,
+            d0Min = 0.1,
+            d0Max = 10.0,
+            T0Min = 0.1,
+            T0Max = 10.0,
+            init_field_type = 'rand',
+            constrain_max = True,
+            delDMin = 0.013,
+            delDMax = 0.26,
+            delPMin = 0.04,
+            delPMax = 0.8,
+        )
+        sim = CFDSim(
+            pde_name = 'CFD_2D_Rand_S',
+            same_eta_zeta = False,
+            spatial_dim = 2,
+            ini_time = 0.0,
+            fin_time = T,
+            dt = dt,
+            CFL = 0.3,
+            show_steps = 100,
+            if_second_order = 1.0,
+            bc = 'periodic',
+            gamma = 1.6666666666666667,
+            p_floor = 0.0001,
+        )
+        pde_params = torch.tensor([[eta,zeta]]).repeat(batch_size,1)
+
+        grid = ic_gen.get_grid(1)[0]
     else:
         raise Exception("Wrong experiment")
     
@@ -319,6 +374,49 @@ def _generate_data_jax(experiment: str,
                     except AssertionError:
                         raise Exception('An error occured while generating data.')
                     traj = traj[:, -nt_effective:,None,:,0] # (n_data, nt_effective, 1, nx)
+                    traj = traj.cpu()
+                    h5f_u[batch_idx * batch_size:batch_idx * batch_size+n_data] = traj[:n_data]
+            
+                print()
+                print("Data saved")
+                print()
+                print()
+                h5f.close()
+    elif experiment == 'CNS':
+        multiplier = 5
+        for mode, _, num_samples in files:
+            if num_samples > 0:
+                
+                num_batches = int(np.ceil(num_samples / batch_size))
+
+                pde_string = experiment
+                print(f'Equation: {pde_string}')
+                print(f'Mode: {mode}')
+                print(f'Number of samples: {num_samples}')
+
+                sys.stdout.flush()
+
+                save_name = "data/" + "_".join([pde_string, mode])
+                save_name = save_name + "_" + str(num_samples)
+                h5f = h5py.File("".join([save_name, '.h5']), 'a')
+                dataset = h5f.create_group(mode)
+                h5f_u = {}
+                h5f_u = dataset.create_dataset(f'pde', (num_samples, nt_effective*multiplier, 4, nx, nx), dtype=float)
+
+                # for batch_idx in tqdm(range(num_batches)):
+                for batch_idx in range(num_batches):
+                    n_data = min((batch_idx+1) * batch_size,num_samples) - batch_idx * batch_size
+                    if n_data == 0:
+                        continue
+                    ic_params = ic_gen.initialize_ic_params(batch_size)
+                    ic = ic_gen.generate_initial_conditions(ic_params, pde_params)
+                    try:
+                        traj, _, _= sim.n_step_sim(ic, pde_params,grid, 0,n_steps=nt) # (n_data, nt, nx, nx, 4)
+
+                    except AssertionError:
+                        raise Exception('An error occured while generating data.')
+                    traj = traj[:, -nt_effective:].permute(0,1,4,2,3) # (n_data, nt_effective, 4, nx, nx)
+                    traj = traj.repeat_interleave(multiplier, dim=1)  # Repeat each timestep 5 times along time dimension (n_data, nt_effective*5, 4, nx, nx)
                     traj = traj.cpu()
                     h5f_u[batch_idx * batch_size:batch_idx * batch_size+n_data] = traj[:n_data]
             
@@ -567,7 +665,7 @@ def _generate_data_ps(experiment: str,
 
 @hydra.main(version_base=None, config_path="cfg_flexible", config_name="config.yaml")
 def main(cfg: OmegaConf):
-    os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = ".30" # proportion of memory preallocated for jax
+    # os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = ".90" # proportion of memory preallocated for jax
     print("Input arguments:")
     print(OmegaConf.to_yaml(cfg))
 
@@ -668,6 +766,11 @@ def evolve(u0, cfg, t0=0, timesteps=1):
         evolve_burgers = EvolveJax(cfg)
         timestep_length = 130//(cfg.nt-1)
         return evolve_burgers(u0, t0, timesteps*timestep_length)[:,timestep_length::timestep_length]
+    elif cfg.equation == "CNS":
+        evolve_cns = EvolveJaxCNS(cfg)
+        return evolve_cns(u0, t0, timesteps)[:,1:]
+        # timestep_length = 130//(cfg.nt-1)
+        # return evolve_cns(u0, t0, timesteps*timestep_length)[:,timestep_length::timestep_length]
     else:
         raise Exception("Wrong experiment")
 
@@ -714,6 +817,89 @@ class EvolveJax():
         if onedata:
             traj = traj[:1]
         return traj
+
+
+class EvolveJaxCNS():
+    def __init__(self, cfg):
+        from al4pde.tasks.ic_gen.ic_gen_2d_ns_rand import ICGenNSRand
+        from al4pde.tasks.sim.cfd import CFDSim
+        self.cfg = cfg
+        
+        L = cfg.generate_data.L
+        nx = cfg.generate_data.nx
+        # T = cfg.generate_data.end_time
+        # nt = cfg.generate_data.nt 
+        dt = cfg.generate_data.end_time / (cfg.generate_data.nt-1) * (26 / (cfg.nt-1))
+        
+        eta = cfg.generate_data.eta
+        zeta = cfg.generate_data.zeta
+        
+        self.eta = eta
+        self.zeta = zeta
+        ic_gen = ICGenNSRand(
+            k_tot = 4,
+            xL = 0.,
+            xR = L,
+            yL = 0.0,
+            yR = L,
+            zL = 0.0,
+            zR = 1.0,
+            nx = nx,
+            ny = nx,
+            nz = 1,
+            mach_min = 0.1,
+            mach_max = 1.0,
+            gamma = 1.6666666666666667,
+            d0Min = 0.1,
+            d0Max = 10.0,
+            T0Min = 0.1,
+            T0Max = 10.0,
+            init_field_type = 'rand',
+            constrain_max = True,
+            delDMin = 0.013,
+            delDMax = 0.26,
+            delPMin = 0.04,
+            delPMax = 0.8,
+        )
+        self.sim = CFDSim(
+            pde_name = 'CFD_2D_Rand_S',
+            same_eta_zeta = False,
+            spatial_dim = 2,
+            ini_time = 0.0,
+            fin_time = dt,
+            dt = dt,
+            CFL = 0.3,
+            show_steps = 100,
+            if_second_order = 1.0,
+            bc = 'periodic',
+            gamma = 1.6666666666666667,
+            p_floor = 0.0001,
+        )
+        # pde_params = torch.tensor([[eta,zeta]]).repeat(batch_size,1)
+
+        self.grid = ic_gen.get_grid(1)[0]
+        
+    def __call__(self, u0, t0=0, timesteps=1):
+        # u0 has shape (n_data, 4, nx,nx)
+        n_data, _, nx, _ = u0.shape
+        # timesteps = timesteps + 1
+        onedata = False
+        if n_data == 1:
+            u0 = u0.repeat(2,1,1,1)
+            n_data = 2
+            onedata = True
+        u0 = u0.permute(0,2,3,1).unsqueeze(3) # (n_data, nx, nx, 1, 4)
+        pde_params = torch.Tensor([[self.eta, self.zeta]]).repeat(n_data, 1)
+        # traj, _ = self.sim(u0,pde_params,self.grid, nt=timesteps) # (n_data, nt, nx, nx, 4)
+        # traj, _, _= self.sim(u0, pde_params, self.grid)
+        traj, _, _= self.sim.n_step_sim(u0, pde_params, self.grid, 0, n_steps=timesteps)
+        # traj, _= self.sim(u0, pde_params, self.grid, 0, n_steps=timesteps)
+        traj = traj.permute(0,1,4,2,3)# (n_data, nt, 4, nx, nx)
+        if onedata:
+            traj = traj[:1]
+        return traj
+
+
 
 
 def _evolve_sim(u0, cfg, t0=0, timesteps=1):

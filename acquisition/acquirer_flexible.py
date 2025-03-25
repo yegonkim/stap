@@ -348,8 +348,8 @@ class Acquirer:
                 for i, model in enumerate(ensemble):
                     model.eval()
                     pred.append(split_model(model, self.eval_batch_size)(X_t[i]))
-            pred = torch.stack(pred, dim=0) # [n_models, bs_indices, 1, nx]
-            pred_with_zeros = torch.zeros(len(ensemble), X.shape[0], 1, *X.shape[2:], device=self.device) # [n_models, bs, 1, nx]
+            pred = torch.stack(pred, dim=0) # [n_models, bs_indices, C, nx]
+            pred_with_zeros = torch.zeros(len(ensemble), X.shape[0], pred.shape[2], *X.shape[2:], device=self.device) # [n_models, bs, 1, nx]
             pred_with_zeros[:, indices] = pred
             pred_trajectory = torch.cat([pred_trajectory, pred_with_zeros], dim=2) # [n_models, bs, t+2, nx]
 
