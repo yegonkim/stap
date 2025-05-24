@@ -1,8 +1,0 @@
-# @package _global_
-defaults:
-  - default_conf
-equation: KS
-train:
-  unrolling: 0
-wandb:
-  project: KS

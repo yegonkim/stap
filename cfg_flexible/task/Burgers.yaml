@@ -14,8 +14,8 @@ model:
   n_modes: [32]
 
 dataset:
-  train_path: /mnt/home/yegonkim/home/lupi/data_exp/Burgers_train_10000.h5
-  test_path: /mnt/home/yegonkim/home/lupi/data_exp/Burgers_test_1000.h5
+  train_path: data/Burgers_train_10000.h5
+  test_path: data/Burgers_test_1000.h5
 
 generate_data:
   L: 1

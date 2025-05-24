@@ -5,7 +5,7 @@ equation: KdV
 train:
   unrolling: 0
 wandb:
-  project: KdV_9_26_32
+  project: KdV
 
 filter: 10.0
 
@@ -16,8 +16,8 @@ model:
   n_modes: [256]
 
 dataset:
-  train_path: /mnt/home/yegonkim/home/lupi/data_exp/KdV_train_10000.h5
-  test_path: /mnt/home/yegonkim/home/lupi/data_exp/KdV_test_1000.h5
+  train_path: data/KdV_train_10000.h5
+  test_path: data/KdV_test_1000.h5
 
 
 generate_data:

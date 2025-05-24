@@ -1,8 +1,0 @@
-# @package _global_
-defaults:
-  - default_conf
-equation: KdV
-train:
-  unrolling: 0
-wandb:
-  project: KdV

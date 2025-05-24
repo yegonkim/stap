@@ -13,14 +13,14 @@ datasize: 10000
 testsize: 1000
 
 
-nt: 14
+nt: 27
 
 model:
-  n_modes: [16, 16]
+  n_modes: [32, 32]
 
 dataset:
-  train_path: /mnt/home/yegonkim/home/lupi/data_exp/CNS_train_10000.h5
-  test_path: /mnt/home/yegonkim/home/lupi/data_exp/CNS_test_1000.h5
+  train_path: data/CNS_train_10000.h5
+  test_path: data/CNS_test_1000.h5
 # dataset:
 #   train_path: data/NS_train_1000.h5
 #   test_path: data/NS_test_1.h5
@@ -33,5 +33,5 @@ generate_data:
   L: 1
   eta: 0.005
   zeta: 0.005
-  end_time: 1.0
+  end_time: 0.5
   batch_size: 64
